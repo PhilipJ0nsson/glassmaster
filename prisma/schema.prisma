@@ -1,0 +1,230 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Enums
+enum KundTyp {
+  PRIVAT
+  FORETAG
+}
+
+enum AnvandareRoll {
+  ADMIN
+  ARBETSLEDARE
+  TEKNIKER
+}
+
+enum ArbetsorderStatus {
+  OFFERT
+  BEKRAFTAD
+  PAGAENDE
+  SLUTFORD
+  FAKTURERAD
+  AVBRUTEN
+}
+
+enum MotesTyp {
+  ARBETSORDER
+  MOTE
+  SEMESTER
+  ANNAT
+}
+
+// Basmodell för alla kunder
+model Kund {
+  id            Int          @id @default(autoincrement())
+  kundTyp       KundTyp
+  telefonnummer String
+  epost         String?
+  adress        String
+  kommentarer   String?
+  
+  // Relationer
+  privatperson  Privatperson?
+  foretag       Foretag?
+  arbetsordrar  Arbetsorder[]
+  kalender      Kalender[]
+  
+  skapadDatum   DateTime     @default(now())
+  uppdateradDatum DateTime   @updatedAt
+}
+
+// Modell för privatpersoner
+model Privatperson {
+  id           Int      @id @default(autoincrement())
+  kund         Kund     @relation(fields: [kundId], references: [id], onDelete: Cascade)
+  kundId       Int      @unique
+  fornamn      String
+  efternamn    String
+  personnummer String?
+}
+
+// Modell för företag
+model Foretag {
+  id                    Int      @id @default(autoincrement())
+  kund                  Kund     @relation(fields: [kundId], references: [id], onDelete: Cascade)
+  kundId                Int      @unique
+  foretagsnamn          String
+  organisationsnummer   String?
+  kontaktpersonFornamn  String?
+  kontaktpersonEfternamn String?
+  fakturaadress         String?
+}
+
+// Modell för anställda/användare
+model Anvandare {
+  id              Int             @id @default(autoincrement())
+  fornamn         String
+  efternamn       String
+  telefonnummer   String?
+  epost           String          @unique
+  roll            AnvandareRoll   @default(TEKNIKER)
+  anvandarnamn    String          @unique
+  losenord        String
+  aktiv           Boolean         @default(true)
+  
+  // Relationer
+  tilldeladeOrder Arbetsorder[]   @relation("TilldeladTekniker")
+  skapadeOrder    Arbetsorder[]   @relation("SkapadAv")
+  uppdateradeOrder Arbetsorder[]  @relation("UppdateradAv")
+  kalender        Kalender[]      @relation("AnsvarigForKalender") 
+  medarbetareForKalender KalenderMedarbetare[]
+
+  skapadDatum     DateTime        @default(now())
+  uppdateradDatum DateTime        @updatedAt
+}
+
+// Enum för prissättningstyp
+enum PrissattningTyp {
+  ST    // Styckpris
+  M     // Meterpris
+  M2    // Kvadratmeterpris
+  TIM   // Timpris
+}
+
+// Modell för prislistan
+model Prislista {
+  id             Int             @id @default(autoincrement())
+  namn           String
+  prisExklMoms   Float
+  momssats       Float
+  prisInklMoms   Float
+  kategori       String?
+  artikelnummer  String?         @unique
+  prissattningTyp PrissattningTyp @default(ST)
+  
+  // Relationer
+  orderrader     Orderrad[]
+
+  skapadDatum    DateTime        @default(now())
+  uppdateradDatum DateTime       @updatedAt
+}
+
+// Modell för arbetsordrar
+model Arbetsorder {
+  id              Int               @id @default(autoincrement())
+  kund            Kund              @relation(fields: [kundId], references: [id])
+  kundId          Int
+  ROT             Boolean           @default(false)
+  ROTprocentsats  Float?
+  arbetstid       Float?
+  material        String?
+  referensMärkning String?
+  
+  // Relationer med anställda
+  ansvarigTekniker Anvandare?       @relation("TilldeladTekniker", fields: [ansvarigTeknikerId], references: [id])
+  ansvarigTeknikerId Int?
+  skapadAv        Anvandare         @relation("SkapadAv", fields: [skapadAvId], references: [id])
+  skapadAvId      Int
+  uppdateradAv    Anvandare         @relation("UppdateradAv", fields: [uppdateradAvId], references: [id])
+  uppdateradAvId  Int
+  
+  // Status
+  status          ArbetsorderStatus @default(OFFERT)
+  
+  // Relationer med andra modeller
+  bilder          Bild[]
+  orderrader      Orderrad[]
+  kalender        Kalender[]
+  
+  // Ekonomi
+  totalPrisExklMoms Float?
+  totalPrisInklMoms Float?
+  
+  // Metadata
+  skapadDatum     DateTime          @default(now())
+  uppdateradDatum DateTime          @updatedAt
+}
+
+// Modell för orderrader
+model Orderrad {
+  id             Int          @id @default(autoincrement())
+  arbetsorder    Arbetsorder  @relation(fields: [arbetsorderId], references: [id], onDelete: Cascade)
+  arbetsorderId  Int
+  prislista      Prislista    @relation(fields: [prislistaId], references: [id])
+  prislistaId    Int
+  antal          Int          @default(1)
+  bredd          Float?       // För produkter med mått (meter)
+  hojd           Float?       // För produkter med mått (meter)
+  langd          Float?       // För meterprodukter (meter)
+  tid            Float?       // För timprisade produkter (timmar)
+  rabattProcent  Float        @default(0)
+  enhetsPrisExklMoms Float?   // Sparat à-pris vid orderradens skapande
+  enhetsMomssats  Float?      // Sparad momssats vid orderradens skapande
+  enhetsPrissattningTyp PrissattningTyp? // Sparad prissättningstyp vid orderradens skapande
+  radPrisExklMoms Float
+  radPrisInklMoms Float
+  kommentar      String?
+  
+  skapadDatum    DateTime     @default(now())
+  uppdateradDatum DateTime    @updatedAt
+}
+
+// Modell för kalendern
+model Kalender {
+  id              Int        @id @default(autoincrement())
+  arbetsorder     Arbetsorder? @relation(fields: [arbetsorderId], references: [id])
+  arbetsorderId   Int?
+  kund            Kund?      @relation(fields: [kundId], references: [id])
+  kundId          Int?
+  ansvarig        Anvandare  @relation("AnsvarigForKalender", fields: [ansvarigId], references: [id])
+  ansvarigId      Int
+  medarbetare     KalenderMedarbetare[]
+  datumTid        DateTime
+  slutDatumTid    DateTime
+  motestyp        MotesTyp   @default(ARBETSORDER)
+  titel           String?
+  beskrivning     String?
+  
+  skapadDatum     DateTime   @default(now())
+  uppdateradDatum DateTime   @updatedAt
+}
+
+// Kopplingstabell för många-till-många relation mellan Kalender och Anvandare (medarbetare)
+model KalenderMedarbetare {
+  kalender        Kalender   @relation(fields: [kalenderId], references: [id], onDelete: Cascade)
+  kalenderId      Int
+  anvandare       Anvandare  @relation(fields: [anvandareId], references: [id], onDelete: Cascade)
+  anvandareId     Int
+
+  @@id([kalenderId, anvandareId])
+}
+
+// Modell för bilder
+model Bild {
+  id             Int         @id @default(autoincrement())
+  arbetsorder    Arbetsorder @relation(fields: [arbetsorderId], references: [id], onDelete: Cascade)
+  arbetsorderId  Int
+  filnamn        String
+  filsokvag      String
+  
+  skapadDatum    DateTime    @default(now())
+}
