@@ -1,12 +1,14 @@
+// File: /Users/nav/Projects/glassmaestro/glassmaster/app/(skyddade-sidor)/prislista/page.tsx
 'use client';
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { PlusCircle, Search } from "lucide-react";
+import { PlusCircle, Search } from "lucide-react"; 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import PrisDialog from "./komponenter/pris-dialog";
 import PrisLista from "./komponenter/pris-lista";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"; // Importera Card komponenter
 
 export type PrissattningTyp = 'ST' | 'M' | 'M2' | 'TIM';
 
@@ -41,8 +43,10 @@ export default function PrislistaPage() {
   });
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<string>("");
-  const [isOpen, setIsOpen] = useState(false);
+  const [filter, setFilter] = useState<string>(""); 
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [selectedPrispost, setSelectedPrispost] = useState<PrislistaData | null>(null);
+
 
   const fetchPrisposter = async () => {
     try {
@@ -81,21 +85,23 @@ export default function PrislistaPage() {
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    // Sök utförs automatiskt via useEffect
   };
 
   const handleFilterChange = (newFilter: string) => {
     setFilter(newFilter);
-    setPagination(prev => ({ ...prev, page: 1 })); // Återställ till sida 1 vid filterändring
+    setPagination(prev => ({ ...prev, page: 1 })); 
   };
 
   const handlePageChange = (newPage: number) => {
     setPagination(prev => ({ ...prev, page: newPage }));
   };
 
-  const handlePrisSaved = () => {
-    fetchPrisposter(); // Uppdatera listan efter att en prispost har sparats
-    setIsOpen(false);
+  const handleDialogClose = (refresh?: boolean) => {
+    setDialogOpen(false);
+    setSelectedPrispost(null);
+    if (refresh) {
+      fetchPrisposter();
+    }
   };
 
   return (
@@ -107,57 +113,80 @@ export default function PrislistaPage() {
             Hantera priser för varor och tjänster
           </p>
         </div>
-        <Button onClick={() => setIsOpen(true)}>
-          <PlusCircle className="mr-2 h-4 w-4" />
-          Lägg till prispost
-        </Button>
       </div>
 
-      <div className="flex flex-col sm:flex-row gap-4 justify-between">
-        <form onSubmit={handleSearch} className="flex flex-1 gap-2">
-          <Input 
-            placeholder="Sök på namn, artikelnummer..." 
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="max-w-[400px]"
+      <Card> {/* Omslutande Card börjar här */}
+        <CardContent className="space-y-4 pt-6"> {/* Lägg till pt-6 för padding inuti CardContent */}
+          {/* Gruppera sök, filter och "Lägg till" knapp */}
+          <div className="flex flex-col sm:flex-row gap-4 justify-between items-center">
+            <form onSubmit={handleSearch} className="flex flex-1 gap-2">
+              <Input 
+                placeholder="Sök på namn, artikelnummer..." 
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="max-w-[400px]" 
+              />
+              <Button type="submit" variant="outline">
+                <Search className="h-4 w-4 mr-2" />
+                Sök
+              </Button>
+            </form>
+            
+            <div className="flex gap-2 flex-wrap items-center"> 
+              <Button 
+                variant={filter === "" ? "default" : "outline"}
+                onClick={() => handleFilterChange("")}
+                size="sm" 
+              >
+                Alla
+              </Button>
+              {kategorier.map((kategori) => (
+                <Button 
+                  key={kategori}
+                  variant={filter === kategori ? "default" : "outline"}
+                  onClick={() => handleFilterChange(kategori)}
+                  size="sm" 
+                >
+                  {kategori}
+                </Button>
+              ))}
+              <Button 
+                onClick={() => {
+                  setSelectedPrispost(null);
+                  setDialogOpen(true);
+                }}
+                size="sm" 
+              >
+                <PlusCircle className="mr-2 h-4 w-4" />
+                Ny prispost
+              </Button>
+            </div>
+          </div>
+
+          <PrisLista 
+            prisposter={prisposter} 
+            pagination={pagination} 
+            loading={loading} 
+            onPageChange={handlePageChange} 
+            onRefresh={fetchPrisposter}
+            onEdit={(prispost) => { 
+              setSelectedPrispost(prispost);
+              setDialogOpen(true);
+            }}
           />
-          <Button type="submit" variant="outline">
-            <Search className="h-4 w-4 mr-2" />
-            Sök
-          </Button>
-        </form>
-        
-        <div className="flex gap-2 flex-wrap">
-          <Button 
-            variant={filter === "" ? "default" : "outline"}
-            onClick={() => handleFilterChange("")}
-          >
-            Alla
-          </Button>
-          {kategorier.map((kategori) => (
-            <Button 
-              key={kategori}
-              variant={filter === kategori ? "default" : "outline"}
-              onClick={() => handleFilterChange(kategori)}
-            >
-              {kategori}
-            </Button>
-          ))}
-        </div>
-      </div>
+        </CardContent>
+      </Card> {/* Omslutande Card slutar här */}
 
-      <PrisLista 
-        prisposter={prisposter} 
-        pagination={pagination} 
-        loading={loading} 
-        onPageChange={handlePageChange} 
-        onRefresh={fetchPrisposter}
-      />
 
       <PrisDialog 
-        isOpen={isOpen} 
-        onOpenChange={setIsOpen} 
-        onPrisSaved={handlePrisSaved} 
+        isOpen={dialogOpen} 
+        onOpenChange={(open) => {
+          if (!open) handleDialogClose();
+          else setDialogOpen(open);
+        }} 
+        onPrisSaved={() => handleDialogClose(true)}
+        defaultValues={selectedPrispost || undefined}
+        isEditing={!!selectedPrispost} 
       />
     </div>
   );

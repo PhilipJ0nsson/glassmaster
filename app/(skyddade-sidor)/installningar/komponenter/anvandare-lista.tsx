@@ -1,3 +1,4 @@
+// File: /Users/nav/Projects/glassmaestro/glassmaster/app/(skyddade-sidor)/installningar/komponenter/anvandare-lista.tsx
 'use client';
 
 import { Button } from "@/components/ui/button";
@@ -13,7 +14,7 @@ import {
 import { AnvandareRoll } from "@prisma/client";
 import { format } from "date-fns";
 import { sv } from "date-fns/locale";
-import { Edit, Loader2, Plus, Search, User } from "lucide-react";
+import { Loader2, Plus, Search, User } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import AnvandareDialog from "./anvandare-dialog";
@@ -75,18 +76,22 @@ export default function AnvandareLista() {
 
   const handleToggleStatus = async (id: number, currentStatus: boolean) => {
     try {
+      // Prevent the row click from happening when the button is clicked
+      // (Already handled by e.stopPropagation() in the button's onClick)
+
       const response = await fetch(`/api/anvandare/${id}`, {
-        method: 'DELETE',
+        method: 'DELETE', // This API endpoint uses DELETE to toggle status
       });
       
       if (!response.ok) {
-        throw new Error('Kunde inte ändra status för användaren');
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Något gick fel');
       }
       
       const data = await response.json();
       toast.success(data.message);
-      fetchAnvandare();
-    } catch (error) {
+      fetchAnvandare(); // Refresh list after status change
+    } catch (error: any) {
       console.error('Fel vid ändring av användarstatus:', error);
       toast.error('Kunde inte ändra status för användaren');
     }
@@ -94,10 +99,10 @@ export default function AnvandareLista() {
 
   const handleDialogClose = (refresh?: boolean) => {
     setDialogOpen(false);
-    setSelectedAnvandare(null);
+    setSelectedAnvandare(null); // Clear selected user when dialog closes
     
     if (refresh) {
-      fetchAnvandare();
+      fetchAnvandare(); // Refresh list if changes were made
     }
   };
 
@@ -142,9 +147,10 @@ export default function AnvandareLista() {
             {showInaktiva ? 'Dölj inaktiva' : 'Visa inaktiva'}
           </Button>
           
+          {/* Button to add new user (opens the same dialog, but with null selectedAnvandare) */}
           <Button 
             onClick={() => {
-              setSelectedAnvandare(null);
+              setSelectedAnvandare(null); // Ensure no user is selected for a new entry
               setDialogOpen(true);
             }}
           >
@@ -164,7 +170,7 @@ export default function AnvandareLista() {
               <TableHead>Roll</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Skapad</TableHead>
-              <TableHead className="text-right">Åtgärder</TableHead>
+              <TableHead className="text-right">Åtgärder</TableHead>{/* Keep this header for Activate/Inactivate */}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -185,7 +191,14 @@ export default function AnvandareLista() {
               </TableRow>
             ) : (
               anvandare.map((anv) => (
-                <TableRow key={anv.id} className={!anv.aktiv ? 'bg-gray-50' : ''}>
+                <TableRow 
+                  key={anv.id} 
+                  className={!anv.aktiv ? 'bg-gray-50' : 'hover:bg-gray-50 cursor-pointer'} 
+                  onClick={() => { // Add onClick handler to the row
+                    setSelectedAnvandare(anv); // Set the selected user
+                    setDialogOpen(true); // Open the dialog
+                  }}
+                >
                   <TableCell>
                     <div className="flex items-center">
                       <User className="h-4 w-4 mr-2 text-gray-500" />
@@ -216,26 +229,16 @@ export default function AnvandareLista() {
                   </TableCell>
                   <TableCell>{formatDate(anv.skapadDatum)}</TableCell>
                   <TableCell className="text-right">
-                    <div className="flex justify-end gap-2">
-                      <Button 
-                        size="icon" 
-                        variant="outline"
-                        onClick={() => {
-                          setSelectedAnvandare(anv);
-                          setDialogOpen(true);
-                        }}
-                      >
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      
-                      <Button 
-                        size="sm" 
-                        variant={anv.aktiv ? "outline" : "default"}
-                        onClick={() => handleToggleStatus(anv.id, anv.aktiv)}
-                      >
-                        {anv.aktiv ? 'Inaktivera' : 'Aktivera'}
-                      </Button>
-                    </div>
+                    <Button 
+                      size="sm" 
+                      variant={anv.aktiv ? "outline" : "default"}
+                      onClick={(e) => {
+                        e.stopPropagation(); // Prevent row click when clicking this button
+                        handleToggleStatus(anv.id, anv.aktiv);
+                      }}
+                    >
+                      {anv.aktiv ? 'Inaktivera' : 'Aktivera'}
+                    </Button>
                   </TableCell>
                 </TableRow>
               ))
@@ -244,14 +247,15 @@ export default function AnvandareLista() {
         </Table>
       </div>
 
+      {/* The dialog component is used for both creating and editing */}
       <AnvandareDialog 
         open={dialogOpen}
         onOpenChange={(open) => {
-          if (!open) handleDialogClose();
+          if (!open) handleDialogClose(); // Call close handler when dialog requests to close
           setDialogOpen(open);
         }}
-        anvandare={selectedAnvandare}
-        onClose={handleDialogClose}
+        anvandare={selectedAnvandare} // Pass the selected user (or null for new)
+        onClose={handleDialogClose} // Pass the close handler
       />
     </div>
   );

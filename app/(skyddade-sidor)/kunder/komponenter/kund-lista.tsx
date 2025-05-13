@@ -1,7 +1,7 @@
+// File: /Users/nav/Projects/glassmaestro/glassmaster/app/(skyddade-sidor)/kunder/komponenter/kund-lista.tsx
 'use client';
 
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -11,8 +11,9 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { KundTyp } from "@prisma/client";
-import { Edit, Loader2, Phone, Trash } from "lucide-react";
-import Link from "next/link";
+import { Loader2, Phone } from "lucide-react"; // Ta bort Edit
+// Link är inte längre nödvändig här
+import { useRouter } from "next/navigation"; 
 import { KundData } from "../page";
 
 interface KundListaProps {
@@ -26,6 +27,7 @@ interface KundListaProps {
   loading: boolean;
   onPageChange: (page: number) => void;
   onRefresh: () => void;
+  // onEdit: (kund: KundData) => void; // Ta bort onEdit prop
 }
 
 export function KundLista({
@@ -34,7 +36,10 @@ export function KundLista({
   loading,
   onPageChange,
   onRefresh,
+  // onEdit, // Ta bort onEdit prop
 }: KundListaProps) {
+  const router = useRouter(); 
+
   const getKundNamn = (kund: KundData) => {
     if (kund.kundTyp === KundTyp.PRIVAT && kund.privatperson) {
       return `${kund.privatperson.fornamn} ${kund.privatperson.efternamn}`;
@@ -48,6 +53,10 @@ export function KundLista({
     if (kund.kundTyp === KundTyp.FORETAG && kund.foretag) {
       if (kund.foretag.kontaktpersonFornamn && kund.foretag.kontaktpersonEfternamn) {
         return `${kund.foretag.kontaktpersonFornamn} ${kund.foretag.kontaktpersonEfternamn}`;
+      } else if (kund.foretag.kontaktpersonFornamn) {
+        return kund.foretag.kontaktpersonFornamn;
+      } else if (kund.foretag.kontaktpersonEfternamn) {
+        return kund.foretag.kontaktpersonEfternamn;
       }
     }
     return '-';
@@ -59,7 +68,7 @@ export function KundLista({
   };
 
   return (
-    <Card>
+    <div className="border rounded-lg overflow-hidden">
       <div className="overflow-x-auto">
         <Table>
           <TableHeader>
@@ -70,13 +79,13 @@ export function KundLista({
               <TableHead>Telefon</TableHead>
               <TableHead>E-post</TableHead>
               <TableHead>Skapad</TableHead>
-              <TableHead className="text-right">Åtgärder</TableHead>
+              {/* <TableHead className="text-right">Åtgärder</TableHead> Ta bort Åtgärder-kolumnen */}
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center py-10">
+                <TableCell colSpan={6} className="text-center py-10"> {/* Uppdatera colSpan */}
                   <div className="flex justify-center items-center">
                     <Loader2 className="h-6 w-6 animate-spin mr-2" />
                     <span>Laddar kunder...</span>
@@ -85,20 +94,19 @@ export function KundLista({
               </TableRow>
             ) : kunder.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center py-10">
+                <TableCell colSpan={6} className="text-center py-10"> {/* Uppdatera colSpan */}
                   Inga kunder hittades.
                 </TableCell>
               </TableRow>
             ) : (
               kunder.map((kund) => (
-                <TableRow key={kund.id}>
+                <TableRow 
+                  key={kund.id}
+                  className="hover:bg-gray-50 cursor-pointer"
+                  onClick={() => router.push(`/kunder/${kund.id}`)} 
+                >
                   <TableCell className="font-medium">
-                    <Link 
-                      href={`/kunder/${kund.id}`} 
-                      className="text-blue-600 hover:underline"
-                    >
-                      {getKundNamn(kund)}
-                    </Link>
+                    {getKundNamn(kund)}
                   </TableCell>
                   <TableCell>
                     {kund.kundTyp === KundTyp.PRIVAT ? 'Privat' : 'Företag'}
@@ -108,6 +116,7 @@ export function KundLista({
                     <a 
                       href={`tel:${kund.telefonnummer}`} 
                       className="flex items-center text-blue-600 hover:underline"
+                      onClick={(e) => e.stopPropagation()} 
                     >
                       <Phone className="h-3 w-3 mr-1" />
                       {kund.telefonnummer}
@@ -118,21 +127,18 @@ export function KundLista({
                       <a 
                         href={`mailto:${kund.epost}`} 
                         className="text-blue-600 hover:underline"
+                        onClick={(e) => e.stopPropagation()} 
                       >
                         {kund.epost}
                       </a>
                     ) : '-'}
                   </TableCell>
                   <TableCell>{formatDate(kund.skapadDatum)}</TableCell>
+                  {/* 
                   <TableCell className="text-right">
-                    <div className="flex justify-end gap-2">
-                      <Link href={`/kunder/${kund.id}/redigera`}>
-                        <Button size="icon" variant="outline">
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                      </Link>
-                    </div>
+                    Ta bort innehållet här
                   </TableCell>
+                  */}
                 </TableRow>
               ))
             )}
@@ -140,7 +146,6 @@ export function KundLista({
         </Table>
       </div>
 
-      {/* Paginering */}
       {pagination.totalPages > 1 && (
         <div className="flex items-center justify-between p-4 border-t">
           <div className="text-sm text-muted-foreground">
@@ -163,7 +168,6 @@ export function KundLista({
                   Math.abs(page - pagination.page) <= 1
               )
               .map((page, index, array) => {
-                // Lägg till ellipsis mellan icke-intilliggande sidor
                 const showEllipsisAfter =
                   index < array.length - 1 && array[index + 1] - page > 1;
 
@@ -194,6 +198,6 @@ export function KundLista({
           </div>
         </div>
       )}
-    </Card>
+    </div>
   );
 }

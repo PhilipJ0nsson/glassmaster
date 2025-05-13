@@ -1,3 +1,4 @@
+// File: /Users/nav/Projects/glassmaestro/glassmaster/app/api/anvandare/[id]/route.ts
 import { prisma } from '@/lib/prisma';
 import { AnvandareRoll } from '@prisma/client';
 import { getServerSession } from 'next-auth';
@@ -15,7 +16,7 @@ interface RouteParams {
 export async function GET(req: NextRequest, { params }: RouteParams) {
   try {
     const session = await getServerSession(authOptions);
-    
+
     if (!session?.user) {
       return NextResponse.json(
         { error: 'Inte autentiserad' },
@@ -24,7 +25,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     }
 
     const id = parseInt(params.id);
-    
+
     if (isNaN(id)) {
       return NextResponse.json(
         { error: 'Ogiltigt användar-ID' },
@@ -32,10 +33,10 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Kontrollera behörighet - endast admin och arbetsledare kan se andra användare, 
+    // Kontrollera behörighet - endast admin och arbetsledare kan se andra användare,
     // tekniker kan bara se sin egen information
-    if (session.user.role !== AnvandareRoll.ADMIN && 
-        session.user.role !== AnvandareRoll.ARBETSLEDARE && 
+    if (session.user.role !== AnvandareRoll.ADMIN &&
+        session.user.role !== AnvandareRoll.ARBETSLEDARE &&
         parseInt(session.user.id as string) !== id) {
       return NextResponse.json(
         { error: 'Behörighet saknas' },
@@ -81,7 +82,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 export async function PUT(req: NextRequest, { params }: RouteParams) {
   try {
     const session = await getServerSession(authOptions);
-    
+
     if (!session?.user) {
       return NextResponse.json(
         { error: 'Inte autentiserad' },
@@ -90,7 +91,7 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
     }
 
     const id = parseInt(params.id);
-    
+
     if (isNaN(id)) {
       return NextResponse.json(
         { error: 'Ogiltigt användar-ID' },
@@ -122,8 +123,9 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
     }
 
     // Arbetsledare kan inte uppdatera admin eller andra arbetsledare
-    if (isArbesledare && 
-        (befintligAnvandare.roll === AnvandareRoll.ADMIN || 
+    if (isArbesledare &&
+        !isSelf && // Låt arbetsledare uppdatera sig själva
+        (befintligAnvandare.roll === AnvandareRoll.ADMIN ||
          befintligAnvandare.roll === AnvandareRoll.ARBETSLEDARE)) {
       return NextResponse.json(
         { error: 'Behörighet saknas för att uppdatera denna användartyp' },
@@ -140,15 +142,15 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
     }
 
     const body = await req.json();
-    let { 
-      fornamn, 
-      efternamn, 
-      epost, 
-      telefonnummer, 
-      roll, 
-      anvandarnamn, 
-      losenord, 
-      aktiv 
+    let {
+      fornamn,
+      efternamn,
+      epost,
+      telefonnummer,
+      roll,
+      anvandarnamn,
+      losenord,
+      aktiv
     } = body;
 
     // Tekniker kan bara uppdatera vissa fält för sig själva
@@ -187,28 +189,32 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
 
     // Förbered uppdateringsdata
     const updateData: any = {};
-    
+
     if (fornamn !== undefined) updateData.fornamn = fornamn;
     if (efternamn !== undefined) updateData.efternamn = efternamn;
     if (epost !== undefined) updateData.epost = epost;
     if (telefonnummer !== undefined) updateData.telefonnummer = telefonnummer;
-    if (aktiv !== undefined) updateData.aktiv = aktiv;
     if (anvandarnamn !== undefined) updateData.anvandarnamn = anvandarnamn;
-    
-    // Endast admin eller arbetsledare kan ändra roll
-    if ((isAdmin || isArbesledare) && roll !== undefined) {
-      // Arbetsledare kan bara ändra tekniker, inte göra någon till admin
+
+    // Admin eller arbetsledare som uppdaterar sig själv eller tekniker kan ändra aktiv-status
+    if ((isAdmin || (isArbesledare && !isSelf && befintligAnvandare.roll === AnvandareRoll.TEKNIKER) || isSelf) && aktiv !== undefined) {
+         // Tillåt endast admin att ändra aktiv-status
+         if(isAdmin && aktiv !== undefined) {
+           updateData.aktiv = aktiv;
+         }
+    }
+
+    // Endast admin eller arbetsledare kan ändra roll (och arbetsledare kan inte göra någon till admin)
+    if ((isAdmin || (isArbesledare && befintligAnvandare.roll === AnvandareRoll.TEKNIKER)) && roll !== undefined) {
       if (isArbesledare && roll === AnvandareRoll.ADMIN) {
         return NextResponse.json(
           { error: 'Arbetsledare har inte behörighet att göra någon till administratör' },
           { status: 403 }
         );
       }
-      
-      // Admin kan ändra roll för vem som helst
       updateData.roll = roll;
     }
-    
+
     // Hantera lösenordsändring
     if (losenord) {
       updateData.losenord = await bcrypt.hash(losenord, 10);
@@ -243,11 +249,11 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
   }
 }
 
-// DELETE /api/anvandare/[id] - Inaktivera/aktivera en användare
+// DELETE /api/anvandare/[id] - Inaktivera/aktivera eller radera en användare
 export async function DELETE(req: NextRequest, { params }: RouteParams) {
   try {
     const session = await getServerSession(authOptions);
-    
+
     if (!session?.user) {
       return NextResponse.json(
         { error: 'Inte autentiserad' },
@@ -255,7 +261,7 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Endast administratörer kan inaktivera/aktivera användare
+    // Endast administratörer kan utföra dessa åtgärder
     if (session.user.role !== AnvandareRoll.ADMIN) {
       return NextResponse.json(
         { error: 'Behörighet saknas' },
@@ -264,7 +270,7 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
     }
 
     const id = parseInt(params.id);
-    
+
     if (isNaN(id)) {
       return NextResponse.json(
         { error: 'Ogiltigt användar-ID' },
@@ -272,12 +278,13 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Kontrollera om användaren finns
+    // Hämta query parameter för att avgöra åtgärd
+    const { searchParams } = req.nextUrl;
+    const permanent = searchParams.get('permanent') === 'true';
+
+    // Hitta användaren som ska hanteras
     const anvandare = await prisma.anvandare.findUnique({
       where: { id },
-      select: {
-        aktiv: true,
-      }
     });
 
     if (!anvandare) {
@@ -287,29 +294,97 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Vi gör inte en hård borttagning utan togglar aktiv-flaggan
-    const uppdateradAnvandare = await prisma.anvandare.update({
-      where: { id },
-      data: {
-        aktiv: !anvandare.aktiv
-      },
-      select: {
-        id: true,
-        aktiv: true,
-      }
-    });
+    // Förhindra admin från att radera/inaktivera sig själv
+    if (id === parseInt(session.user.id as string)) {
+        return NextResponse.json(
+            { error: 'Du kan inte radera eller inaktivera ditt eget konto.' },
+            { status: 400 }
+        );
+    }
 
-    return NextResponse.json({
-      message: uppdateradAnvandare.aktiv
-        ? `Användare med ID ${id} har aktiverats`
-        : `Användare med ID ${id} har inaktiverats`,
-      aktiv: uppdateradAnvandare.aktiv
-    });
+    if (permanent) {
+      // --- Permanent Radering ---
+
+      // 1. Kontrollera beroenden som förhindrar radering (RESTRICT)
+      const blockingOrders = await prisma.arbetsorder.count({
+          where: {
+              OR: [
+                  { skapadAvId: id },
+                  { uppdateradAvId: id }
+              ]
+          }
+      });
+      const blockingCalendar = await prisma.kalender.count({
+          where: { ansvarigId: id }
+      });
+
+      if (blockingOrders > 0 || blockingCalendar > 0) {
+          let errorMessages = [];
+          if (blockingOrders > 0) errorMessages.push("arbetsordrar (som skapare/uppdaterare)");
+          if (blockingCalendar > 0) errorMessages.push("kalenderhändelser (som ansvarig)");
+
+          return NextResponse.json(
+              { error: `Kan inte radera användaren eftersom den är kopplad till ${errorMessages.join(' och ')}.` },
+              { status: 400 }
+          );
+      }
+
+      // 2. Hantera beroenden som tillåter radering (SET NULL, CASCADE)
+      // Prisma hanterar detta automatiskt baserat på schemat:
+      // - Arbetsorder.ansvarigTeknikerId -> SET NULL
+      // - KalenderMedarbetare -> CASCADE
+
+      // 3. Utför radering
+      // Använd en transaktion för att säkerställa att allt går igenom eller inget
+      await prisma.$transaction(async (tx) => {
+        // Ta bort kopplingar i KalenderMedarbetare (Prisma gör detta via CASCADE, men kan vara explicit om man vill)
+        // await tx.kalenderMedarbetare.deleteMany({ where: { anvandareId: id } });
+
+        // Uppdatera Arbetsorder.ansvarigTeknikerId till null (Prisma gör detta via SET NULL)
+        // await tx.arbetsorder.updateMany({ where: { ansvarigTeknikerId: id }, data: { ansvarigTeknikerId: null } });
+
+        // Slutligen, radera användaren
+        await tx.anvandare.delete({ where: { id } });
+      });
+
+
+      return NextResponse.json(
+          { message: `Användare med ID ${id} har raderats permanent.` },
+          { status: 200 }
+      );
+
+    } else {
+      // --- Växla Aktiv Status (befintlig logik) ---
+      const uppdateradAnvandare = await prisma.anvandare.update({
+        where: { id },
+        data: {
+          aktiv: !anvandare.aktiv
+        },
+        select: {
+          id: true,
+          aktiv: true,
+        }
+      });
+
+      return NextResponse.json({
+        message: uppdateradAnvandare.aktiv
+          ? `Användare med ID ${id} har aktiverats`
+          : `Användare med ID ${id} har inaktiverats`,
+        aktiv: uppdateradAnvandare.aktiv
+      });
+    }
 
   } catch (error) {
-    console.error('Fel vid inaktivering/aktivering av användare:', error);
+    console.error('Fel vid hantering av användare (DELETE):', error);
+    // Ge mer specifik feedback vid Prisma-fel (t.ex. Foreign Key constraint)
+    if ((error as any).code === 'P2003' || (error as any).code === 'P2014') { // Prisma foreign key constraint codes
+        return NextResponse.json(
+            { error: 'Kunde inte slutföra åtgärden på grund av beroenden i databasen. Kontrollera att användaren inte är kopplad till kritiska poster.' },
+            { status: 400 }
+        );
+    }
     return NextResponse.json(
-      { error: 'Ett fel uppstod vid inaktivering/aktivering av användare' },
+      { error: 'Ett fel uppstod vid hantering av användare' },
       { status: 500 }
     );
   }

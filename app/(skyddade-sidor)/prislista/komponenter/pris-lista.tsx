@@ -1,3 +1,4 @@
+// File: /Users/nav/Projects/glassmaestro/glassmaster/app/(skyddade-sidor)/prislista/komponenter/pris-lista.tsx
 'use client';
 
 import { Button } from "@/components/ui/button";
@@ -10,12 +11,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Edit, Loader2, Trash } from "lucide-react";
-import Link from "next/link";
-import { useState } from "react";
-import { toast } from "sonner";
+import { Loader2 } from "lucide-react"; // Ta bort Edit och Trash
 import { PrislistaData } from "../page";
-import PrisDialog from "./pris-dialog";
+// Ta bort PrisDialog import, den hanteras i PrislistaPage nu
 
 interface PrisListaProps {
   prisposter: PrislistaData[];
@@ -28,6 +26,7 @@ interface PrisListaProps {
   loading: boolean;
   onPageChange: (page: number) => void;
   onRefresh: () => void;
+  onEdit: (prispost: PrislistaData) => void; // Ny prop för att signalera redigering
 }
 
 export default function PrisLista({
@@ -36,10 +35,9 @@ export default function PrisLista({
   loading,
   onPageChange,
   onRefresh,
+  onEdit, // Ny prop
 }: PrisListaProps) {
-  const [editPrispost, setEditPrispost] = useState<PrislistaData | null>(null);
-  const [isEditOpen, setIsEditOpen] = useState(false);
-  const [deletingId, setDeletingId] = useState<number | null>(null);
+  // Ta bort editPrispost, isEditOpen, deletingId och handleDelete. De hanteras i PrisDialog / PrislistaPage
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('sv-SE', {
@@ -49,40 +47,7 @@ export default function PrisLista({
     }).format(amount);
   };
 
-  const handleDelete = async (id: number) => {
-    if (confirm('Är du säker på att du vill ta bort denna prispost?')) {
-      try {
-        setDeletingId(id);
-        const response = await fetch(`/api/prislista/${id}`, {
-          method: 'DELETE',
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || 'Något gick fel');
-        }
-
-        toast.success('Prisposten har tagits bort');
-        onRefresh(); // Uppdatera listan
-      } catch (error: any) {
-        console.error('Fel vid borttagning av prispost:', error);
-        toast.error(error.message || 'Kunde inte ta bort prisposten');
-      } finally {
-        setDeletingId(null);
-      }
-    }
-  };
-
-  const handleEdit = (prispost: PrislistaData) => {
-    setEditPrispost(prispost);
-    setIsEditOpen(true);
-  };
-
-  const handlePrisSaved = () => {
-    onRefresh(); // Uppdatera listan
-    setIsEditOpen(false);
-    setEditPrispost(null);
-  };
+  // Ta bort handlePrisSaved, det hanteras i PrislistaPage nu
 
   return (
     <>
@@ -98,13 +63,13 @@ export default function PrisLista({
                 <TableHead className="text-right">Pris (exkl. moms)</TableHead>
                 <TableHead className="text-right">Momssats</TableHead>
                 <TableHead className="text-right">Pris (inkl. moms)</TableHead>
-                <TableHead className="text-right">Åtgärder</TableHead>
+                {/* <TableHead className="text-right">Åtgärder</TableHead> Ta bort Åtgärder-kolumnen */}
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center py-10">
+                  <TableCell colSpan={7} className="text-center py-10"> {/* Uppdatera colSpan */}
                     <div className="flex justify-center items-center">
                       <Loader2 className="h-6 w-6 animate-spin mr-2" />
                       <span>Laddar prisposter...</span>
@@ -113,13 +78,17 @@ export default function PrisLista({
                 </TableRow>
               ) : prisposter.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center py-10">
+                  <TableCell colSpan={7} className="text-center py-10"> {/* Uppdatera colSpan */}
                     Inga prisposter hittades.
                   </TableCell>
                 </TableRow>
               ) : (
                 prisposter.map((prispost) => (
-                  <TableRow key={prispost.id}>
+                  <TableRow 
+                    key={prispost.id} 
+                    className="hover:bg-gray-50 cursor-pointer" // Gör raden klickbar
+                    onClick={() => onEdit(prispost)} // Anropa onEdit när raden klickas
+                  >
                     <TableCell className="font-medium">
                       {prispost.namn}
                     </TableCell>
@@ -154,29 +123,11 @@ export default function PrisLista({
                     <TableCell className="text-right">
                       {formatCurrency(prispost.prisInklMoms)}
                     </TableCell>
+                    {/* 
                     <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button 
-                          size="icon" 
-                          variant="outline"
-                          onClick={() => handleEdit(prispost)}
-                        >
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <Button 
-                          size="icon" 
-                          variant="outline"
-                          onClick={() => handleDelete(prispost.id)}
-                          disabled={deletingId === prispost.id}
-                        >
-                          {deletingId === prispost.id ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Trash className="h-4 w-4 text-red-500" />
-                          )}
-                        </Button>
-                      </div>
+                      Ta bort åtgärdsknapparna härifrån
                     </TableCell>
+                    */}
                   </TableRow>
                 ))
               )}
@@ -207,7 +158,6 @@ export default function PrisLista({
                     Math.abs(page - pagination.page) <= 1
                 )
                 .map((page, index, array) => {
-                  // Lägg till ellipsis mellan icke-intilliggande sidor
                   const showEllipsisAfter =
                     index < array.length - 1 && array[index + 1] - page > 1;
 
@@ -240,16 +190,7 @@ export default function PrisLista({
         )}
       </Card>
 
-      {/* Redigeringsdialog */}
-      {editPrispost && (
-        <PrisDialog 
-          isOpen={isEditOpen} 
-          onOpenChange={setIsEditOpen} 
-          onPrisSaved={handlePrisSaved}
-          defaultValues={editPrispost}
-          isEditing
-        />
-      )}
+      {/* Ta bort PrisDialog härifrån, den hanteras i PrislistaPage nu */}
     </>
   );
 }

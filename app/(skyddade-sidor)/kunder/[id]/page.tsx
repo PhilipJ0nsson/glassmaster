@@ -2,73 +2,65 @@
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { KundTyp } from "@prisma/client";
+import { KundTyp, ArbetsorderStatus } from "@prisma/client";
 import { Edit, ArrowLeft, Phone, Mail, Home, FileText } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import { KundDialog } from "../komponenter/kund-dialog";
+import type { KundData as BasKundData } from "../page"; 
 
-interface KundDetalj {
-  id: number;
-  kundTyp: KundTyp;
-  telefonnummer: string;
-  epost: string | null;
-  adress: string;
-  kommentarer: string | null;
-  privatperson: {
-    fornamn: string;
-    efternamn: string;
-    personnummer: string | null;
-  } | null;
-  foretag: {
-    foretagsnamn: string;
-    organisationsnummer: string | null;
-    kontaktpersonFornamn: string | null;
-    kontaktpersonEfternamn: string | null;
-    fakturaadress: string | null;
-    referensMärkning: string | null;
-  } | null;
-  arbetsordrar: any[];
-  skapadDatum: string;
-  uppdateradDatum: string;
+interface KundDetaljerData extends BasKundData {
+  arbetsordrar: Array<{ 
+    id: number;
+    status: ArbetsorderStatus;
+    ansvarigTekniker: {
+      fornamn: string;
+      efternamn: string;
+    } | null;
+    skapadDatum: string;
+    referensMärkning: string | null; // Tillagd för märkning
+  }>;
 }
 
-export default function KundDetalj() {
+
+export default function KundDetaljPage() {
   const params = useParams();
-  const router = useRouter();
-  const [kund, setKund] = useState<KundDetalj | null>(null);
+  const router = useRouter(); // Importera och använd useRouter för navigering
+  const [kund, setKund] = useState<KundDetaljerData | null>(null); 
   const [loading, setLoading] = useState(true);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+
+  const fetchKund = async () => {
+    try {
+      setLoading(true);
+      const response = await fetch(`/api/kunder/${params.id}`);
+      
+      if (!response.ok) {
+        if (response.status === 404) {
+          toast.error("Kunden hittades inte");
+          router.push("/kunder");
+          return;
+        }
+        throw new Error('Kunde inte hämta kund');
+      }
+      
+      const data: KundDetaljerData = await response.json(); 
+      setKund(data);
+    } catch (error) {
+      console.error('Fel vid hämtning av kund:', error);
+      toast.error('Kunde inte hämta kund');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchKund = async () => {
-      try {
-        setLoading(true);
-        const response = await fetch(`/api/kunder/${params.id}`);
-        
-        if (!response.ok) {
-          if (response.status === 404) {
-            toast.error("Kunden hittades inte");
-            router.push("/kunder");
-            return;
-          }
-          throw new Error('Kunde inte hämta kund');
-        }
-        
-        const data = await response.json();
-        setKund(data);
-      } catch (error) {
-        console.error('Fel vid hämtning av kund:', error);
-        toast.error('Kunde inte hämta kund');
-      } finally {
-        setLoading(false);
-      }
-    };
-
     if (params.id) {
       fetchKund();
     }
-  }, [params.id, router]);
+  }, [params.id]); 
 
   const getKundNamn = () => {
     if (!kund) return '';
@@ -84,6 +76,11 @@ export default function KundDetalj() {
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
     return date.toLocaleDateString('sv-SE');
+  };
+
+  const handleEditKundSaved = () => {
+    setEditDialogOpen(false);
+    fetchKund(); 
   };
 
   if (loading) {
@@ -105,31 +102,69 @@ export default function KundDetalj() {
     );
   }
 
+  const getStatusBadge = (status: ArbetsorderStatus) => {
+    let colorClasses = '';
+    let text = '';
+    switch (status) {
+      case ArbetsorderStatus.OFFERT:
+        colorClasses = 'bg-yellow-100 text-yellow-800';
+        text = 'Offert';
+        break;
+      case ArbetsorderStatus.BEKRAFTAD:
+        colorClasses = 'bg-blue-100 text-blue-800';
+        text = 'Bekräftad';
+        break;
+      case ArbetsorderStatus.PAGAENDE:
+        colorClasses = 'bg-purple-100 text-purple-800';
+        text = 'Pågående';
+        break;
+      case ArbetsorderStatus.SLUTFORD:
+        colorClasses = 'bg-green-100 text-green-800';
+        text = 'Slutförd';
+        break;
+      case ArbetsorderStatus.FAKTURERAD:
+        colorClasses = 'bg-gray-100 text-gray-800';
+        text = 'Fakturerad';
+        break;
+      case ArbetsorderStatus.AVBRUTEN:
+        colorClasses = 'bg-red-100 text-red-800';
+        text = 'Avbruten';
+        break;
+      default:
+        colorClasses = 'bg-gray-100 text-gray-800';
+        text = status;
+    }
+    return <span className={`inline-flex rounded-full px-2 py-1 text-xs ${colorClasses}`}>{text}</span>;
+  };
+
+  const handleArbetsorderRowClick = (orderId: number) => {
+    router.push(`/arbetsordrar/${orderId}`);
+  };
+
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <div className="flex items-center space-x-4">
-          <Link href="/kunder">
-            <Button variant="outline" size="icon">
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
-          </Link>
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight mb-1">{getKundNamn()}</h1>
-            <p className="text-muted-foreground">
-              {kund.kundTyp === KundTyp.PRIVAT ? 'Privatperson' : 'Företag'}
-            </p>
+    <>
+      <div className="space-y-6">
+        <div className="flex justify-between items-center">
+          <div className="flex items-center space-x-4">
+            <Link href="/kunder">
+              <Button variant="outline" size="icon">
+                <ArrowLeft className="h-4 w-4" />
+              </Button>
+            </Link>
+            <div>
+              <h1 className="text-3xl font-bold tracking-tight mb-1">{getKundNamn()}</h1>
+              <p className="text-muted-foreground">
+                {kund.kundTyp === KundTyp.PRIVAT ? 'Privatperson' : 'Företag'}
+              </p>
+            </div>
           </div>
-        </div>
-        <Link href={`/kunder/${kund.id}/redigera`}>
-          <Button>
+          <Button onClick={() => setEditDialogOpen(true)}> 
             <Edit className="mr-2 h-4 w-4" />
             Redigera
           </Button>
-        </Link>
-      </div>
+        </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <Card>
           <CardHeader>
             <CardTitle>Kontaktuppgifter</CardTitle>
@@ -236,13 +271,6 @@ export default function KundDetalj() {
                   <p>{kund.foretag.fakturaadress}</p>
                 </div>
               )}
-              
-              {kund.foretag.referensMärkning && (
-                <div>
-                  <p className="font-medium">Referens/Märkning</p>
-                  <p>{kund.foretag.referensMärkning}</p>
-                </div>
-              )}
             </CardContent>
           </Card>
         )}
@@ -253,43 +281,30 @@ export default function KundDetalj() {
           <CardTitle>Senaste arbetsordrar</CardTitle>
         </CardHeader>
         <CardContent>
-          {kund.arbetsordrar && kund.arbetsordrar.length > 0 ? (
+          {kund && kund.arbetsordrar && kund.arbetsordrar.length > 0 ? (
             <div className="space-y-4">
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead className="bg-gray-50 text-gray-700">
                     <tr>
                       <th className="text-left p-2 border-b">Order-ID</th>
+                      <th className="text-left p-2 border-b">Märkning</th>
                       <th className="text-left p-2 border-b">Status</th>
                       <th className="text-left p-2 border-b">Tekniker</th>
                       <th className="text-left p-2 border-b">Skapad</th>
-                      <th className="text-center p-2 border-b">Åtgärd</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {kund.arbetsordrar.map((order: any) => (
-                      <tr key={order.id} className="border-b hover:bg-gray-50">
+                    {kund.arbetsordrar.map((order) => (
+                      <tr 
+                        key={order.id} 
+                        className="border-b hover:bg-gray-50 cursor-pointer" 
+                        onClick={() => handleArbetsorderRowClick(order.id)} 
+                      >
                         <td className="p-2">#{order.id}</td>
+                        <td className="p-2">{order.referensMärkning || '-'}</td>
                         <td className="p-2">
-                          <span className={`inline-flex rounded-full px-2 py-1 text-xs 
-                            ${order.status === 'OFFERT' 
-                              ? 'bg-yellow-100 text-yellow-800' 
-                              : order.status === 'BEKRAFTAD' 
-                              ? 'bg-blue-100 text-blue-800' 
-                              : order.status === 'PAGAENDE' 
-                              ? 'bg-purple-100 text-purple-800'
-                              : order.status === 'SLUTFORD'
-                              ? 'bg-green-100 text-green-800'
-                              : order.status === 'FAKTURERAD'
-                              ? 'bg-gray-100 text-gray-800'
-                              : 'bg-red-100 text-red-800'
-                            }`}>
-                            {order.status === 'OFFERT' ? 'Offert' : 
-                             order.status === 'BEKRAFTAD' ? 'Bekräftad' : 
-                             order.status === 'PAGAENDE' ? 'Pågående' : 
-                             order.status === 'SLUTFORD' ? 'Slutförd' : 
-                             order.status === 'FAKTURERAD' ? 'Fakturerad' : 'Avbruten'}
-                          </span>
+                          {getStatusBadge(order.status)}
                         </td>
                         <td className="p-2">
                           {order.ansvarigTekniker 
@@ -297,11 +312,6 @@ export default function KundDetalj() {
                             : '-'}
                         </td>
                         <td className="p-2">{formatDate(order.skapadDatum)}</td>
-                        <td className="p-2 text-center">
-                          <Link href={`/arbetsordrar/${order.id}`}>
-                            <Button size="sm" variant="outline">Visa</Button>
-                          </Link>
-                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -323,6 +333,17 @@ export default function KundDetalj() {
           )}
         </CardContent>
       </Card>
-    </div>
+      </div>
+
+      {kund && ( 
+        <KundDialog
+          isOpen={editDialogOpen}
+          onOpenChange={setEditDialogOpen}
+          onKundSaved={handleEditKundSaved}
+          defaultValues={kund} 
+          isEditing={true}
+        />
+      )}
+    </>
   );
 }

@@ -13,8 +13,8 @@ import {
 import { ArbetsorderStatus } from "@prisma/client";
 import { format } from "date-fns";
 import { sv } from "date-fns/locale";
-import { Edit, Info, Loader2, User } from "lucide-react";
-import Link from "next/link";
+import { Loader2, User } from "lucide-react"; // Removed Edit and Info
+import { useRouter } from "next/navigation"; // Added useRouter
 import { ArbetsorderData } from "../page";
 
 interface ArbetsorderListaProps {
@@ -39,6 +39,8 @@ export default function ArbetsorderLista({
   onRefresh,
   getStatusColor,
 }: ArbetsorderListaProps) {
+  const router = useRouter(); // Initialize useRouter
+
   const getKundNamn = (arbetsorder: ArbetsorderData) => {
     const { kund } = arbetsorder;
     
@@ -85,6 +87,10 @@ export default function ArbetsorderLista({
     }
   };
 
+  const handleRowClick = (arbetsorderId: number) => {
+    router.push(`/arbetsordrar/${arbetsorderId}`);
+  };
+
   return (
     <Card>
       <div className="overflow-x-auto">
@@ -93,17 +99,18 @@ export default function ArbetsorderLista({
             <TableRow>
               <TableHead>Nr</TableHead>
               <TableHead>Kund</TableHead>
+              <TableHead>Märkning</TableHead> {/* Ny kolumn */}
               <TableHead>Tekniker</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="text-right">Summa</TableHead>
               <TableHead>Skapad</TableHead>
-              <TableHead className="text-right">Åtgärder</TableHead>
+              {/* Åtgärder kolumnen är borttagen */}
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center py-10">
+                <TableCell colSpan={7} className="text-center py-10"> {/* Uppdaterad colSpan till 7 */}
                   <div className="flex justify-center items-center">
                     <Loader2 className="h-6 w-6 animate-spin mr-2" />
                     <span>Laddar arbetsordrar...</span>
@@ -112,13 +119,17 @@ export default function ArbetsorderLista({
               </TableRow>
             ) : arbetsordrar.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center py-10">
+                <TableCell colSpan={7} className="text-center py-10"> {/* Uppdaterad colSpan till 7 */}
                   Inga arbetsordrar hittades.
                 </TableCell>
               </TableRow>
             ) : (
               arbetsordrar.map((arbetsorder) => (
-                <TableRow key={arbetsorder.id}>
+                <TableRow 
+                  key={arbetsorder.id}
+                  onClick={() => handleRowClick(arbetsorder.id)} // Added onClick handler
+                  className="cursor-pointer hover:bg-muted/50" // Added cursor and hover style
+                >
                   <TableCell className="font-medium">#{arbetsorder.id}</TableCell>
                   <TableCell>
                     <div className="flex items-center">
@@ -126,6 +137,7 @@ export default function ArbetsorderLista({
                       <span>{getKundNamn(arbetsorder)}</span>
                     </div>
                   </TableCell>
+                  <TableCell>{arbetsorder.referensMärkning || '-'}</TableCell> {/* Ny cell för märkning */}
                   <TableCell>
                     {arbetsorder.ansvarigTekniker 
                       ? `${arbetsorder.ansvarigTekniker.fornamn} ${arbetsorder.ansvarigTekniker.efternamn}`
@@ -143,21 +155,7 @@ export default function ArbetsorderLista({
                   <TableCell>
                     {formatDate(arbetsorder.skapadDatum)}
                   </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex justify-end gap-2">
-                      <Link href={`/arbetsordrar/${arbetsorder.id}`}>
-                        <Button size="icon" variant="outline">
-                          <Info className="h-4 w-4" />
-                        </Button>
-                      </Link>
-                      
-                      <Link href={`/arbetsordrar/${arbetsorder.id}/redigera`}>
-                        <Button size="icon" variant="outline">
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                      </Link>
-                    </div>
-                  </TableCell>
+                  {/* Cell för Åtgärder är borttagen */}
                 </TableRow>
               ))
             )}
@@ -188,7 +186,6 @@ export default function ArbetsorderLista({
                   Math.abs(page - pagination.page) <= 1
               )
               .map((page, index, array) => {
-                // Lägg till ellipsis mellan icke-intilliggande sidor
                 const showEllipsisAfter =
                   index < array.length - 1 && array[index + 1] - page > 1;
 

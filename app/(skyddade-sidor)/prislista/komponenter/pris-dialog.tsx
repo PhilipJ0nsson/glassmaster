@@ -1,3 +1,4 @@
+// File: /Users/nav/Projects/glassmaestro/glassmaster/app/(skyddade-sidor)/prislista/komponenter/pris-dialog.tsx
 'use client';
 
 import { Button } from "@/components/ui/button";
@@ -7,6 +8,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  DialogDescription, // Importera DialogDescription
 } from "@/components/ui/dialog";
 import {
   Form,
@@ -31,6 +33,17 @@ import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 import { PrislistaData } from "../page";
+import { Loader2, Trash } from "lucide-react"; // Importera Loader2 och Trash
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"; // Importera AlertDialog
 
 const prisSchema = z.object({
   namn: z.string().min(1, "Namn måste anges"),
@@ -57,7 +70,7 @@ interface PrisDialogProps {
   isOpen: boolean;
   onOpenChange: (isOpen: boolean) => void;
   onPrisSaved: () => void;
-  defaultValues?: PrislistaData;
+  defaultValues?: PrislistaData; // Gör optional för att hantera både create och edit
   isEditing?: boolean;
 }
 
@@ -69,14 +82,15 @@ export default function PrisDialog({
   isEditing = false,
 }: PrisDialogProps) {
   const [loading, setLoading] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false); // För radering
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false); // För bekräftelsedialog
   const [prisInklMoms, setPrisInklMoms] = useState<string>("");
 
-  // Standardvärden för formuläret
   const initialValues: PrisFormValues = {
     namn: "",
     prisExklMoms: "",
-    momssats: "25", // Standard momssats
-    prissattningTyp: "ST", // Standard är styckpris
+    momssats: "25",
+    prissattningTyp: "ST",
     kategori: "",
     artikelnummer: "",
   };
@@ -86,23 +100,23 @@ export default function PrisDialog({
     defaultValues: initialValues,
   });
 
-  // Uppdatera formulärdata om defaultValues ändras
   useEffect(() => {
-    if (defaultValues && isOpen) {
-      form.reset({
-        namn: defaultValues.namn,
-        prisExklMoms: defaultValues.prisExklMoms.toString(),
-        momssats: defaultValues.momssats.toString(),
-        prissattningTyp: defaultValues.prissattningTyp || "ST",
-        kategori: defaultValues.kategori || "",
-        artikelnummer: defaultValues.artikelnummer || "",
-      });
-    } else if (!isEditing && isOpen) {
-      form.reset(initialValues);
+    if (isOpen) { // Återställ endast om dialogen är öppen
+        if (defaultValues && isEditing) {
+            form.reset({
+                namn: defaultValues.namn,
+                prisExklMoms: defaultValues.prisExklMoms.toString(),
+                momssats: defaultValues.momssats.toString(),
+                prissattningTyp: defaultValues.prissattningTyp || "ST",
+                kategori: defaultValues.kategori || "",
+                artikelnummer: defaultValues.artikelnummer || "",
+            });
+        } else {
+            form.reset(initialValues); // Reset till initialValues om det är ny post eller ingen defaultValues
+        }
     }
   }, [defaultValues, isOpen, form, isEditing]);
 
-  // Beräkna pris inkl. moms när formulärvärden ändras
   useEffect(() => {
     const subscription = form.watch((value, { name }) => {
       if (
@@ -121,7 +135,6 @@ export default function PrisDialog({
         }
       }
     });
-
     return () => subscription.unsubscribe();
   }, [form.watch]);
 
@@ -131,8 +144,9 @@ export default function PrisDialog({
       
       const payload = {
         ...data,
-        prisExklMoms: data.prisExklMoms,
-        momssats: data.momssats,
+        // Konvertera till nummer här om det behövs av API:et
+        prisExklMoms: parseFloat(data.prisExklMoms),
+        momssats: parseFloat(data.momssats),
       };
 
       const url = isEditing && defaultValues 
@@ -160,11 +174,7 @@ export default function PrisDialog({
           : "Ny prispost har sparats"
       );
       
-      if (!isEditing) {
-        form.reset(initialValues);
-      }
-      
-      onPrisSaved();
+      onPrisSaved(); // Anropa onPrisSaved för att stänga dialog och uppdatera listan
     } catch (error: any) {
       console.error("Fel vid sparande av prispost:", error);
       toast.error(error.message || "Kunde inte spara prisposten");
@@ -173,18 +183,61 @@ export default function PrisDialog({
     }
   };
 
+  const handleDelete = async () => {
+    if (!isEditing || !defaultValues) return;
+
+    setIsDeleting(true);
+    try {
+      const response = await fetch(`/api/prislista/${defaultValues.id}?permanent=true`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Kunde inte radera prisposten.');
+      }
+      toast.success('Prisposten har raderats.');
+      onPrisSaved(); // Close dialog and refresh list
+    } catch (error: any) {
+      toast.error(error.message || 'Kunde inte radera prisposten');
+      console.error('Fel vid radering av prispost:', error);
+    } finally {
+      setIsDeleting(false);
+      setShowDeleteConfirm(false);
+    }
+  };
+
   return (
+    <>
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>
-            {isEditing ? "Redigera prispost" : "Lägg till ny prispost"}
-          </DialogTitle>
+          <div className="flex justify-between items-start">
+            <div>
+              <DialogTitle>
+                {isEditing ? "Redigera prispost" : "Lägg till ny prispost"}
+              </DialogTitle>
+              <DialogDescription>
+                {isEditing ? "Uppdatera prisuppgifter nedan." : "Fyll i information för den nya prisposten."}
+              </DialogDescription>
+            </div>
+            {isEditing && defaultValues && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setShowDeleteConfirm(true)}
+                className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                disabled={isDeleting}
+                aria-label="Radera prispost"
+              >
+                {isDeleting ? <Loader2 className="h-5 w-5 animate-spin" /> : <Trash className="h-5 w-5" />}
+              </Button>
+            )}
+          </div>
         </DialogHeader>
 
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-            {/* Namn */}
             <FormField
               control={form.control}
               name="namn"
@@ -198,8 +251,6 @@ export default function PrisDialog({
                 </FormItem>
               )}
             />
-
-            {/* Pris exkl. moms */}
             <FormField
               control={form.control}
               name="prisExklMoms"
@@ -219,8 +270,6 @@ export default function PrisDialog({
                 </FormItem>
               )}
             />
-
-            {/* Momssats */}
             <FormField
               control={form.control}
               name="momssats"
@@ -240,8 +289,6 @@ export default function PrisDialog({
                 </FormItem>
               )}
             />
-
-            {/* Prissättningstyp */}
             <FormField
               control={form.control}
               name="prissattningTyp"
@@ -250,7 +297,7 @@ export default function PrisDialog({
                   <FormLabel>Prissättningstyp *</FormLabel>
                   <Select 
                     onValueChange={field.onChange} 
-                    defaultValue={field.value}
+                    value={field.value} // Använd value istället för defaultValue för kontrollerad komponent
                   >
                     <FormControl>
                       <SelectTrigger>
@@ -258,49 +305,16 @@ export default function PrisDialog({
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
-                      <SelectItem value="ST">
-                        <div className="flex flex-col">
-                          <span>Styckpris</span>
-                          <span className="text-xs text-gray-500">
-                            Fast pris per styck
-                          </span>
-                        </div>
-                      </SelectItem>
-                      <SelectItem value="M">
-                        <div className="flex flex-col">
-                          <span>Meterpris</span>
-                          <span className="text-xs text-gray-500">
-                            Pris per löpmeter (mäts i mm)
-                          </span>
-                        </div>
-                      </SelectItem>
-                      <SelectItem value="M2">
-                        <div className="flex flex-col">
-                          <span>Kvadratmeterpris</span>
-                          <span className="text-xs text-gray-500">
-                            Pris per kvadratmeter (bredd × höjd i mm)
-                          </span>
-                        </div>
-                      </SelectItem>
-                      <SelectItem value="TIM">
-                        <div className="flex flex-col">
-                          <span>Timpris</span>
-                          <span className="text-xs text-gray-500">
-                            Pris per timme
-                          </span>
-                        </div>
-                      </SelectItem>
+                      <SelectItem value="ST">Styckpris</SelectItem>
+                      <SelectItem value="M">Meterpris</SelectItem>
+                      <SelectItem value="M2">Kvadratmeterpris</SelectItem>
+                      <SelectItem value="TIM">Timpris</SelectItem>
                     </SelectContent>
                   </Select>
-                  <FormDescription>
-                    Välj hur produkten ska prissättas
-                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
             />
-
-            {/* Visa beräknat pris inkl. moms */}
             <div>
               <FormLabel>Pris (inkl. moms)</FormLabel>
               <Input
@@ -308,91 +322,87 @@ export default function PrisDialog({
                 value={prisInklMoms ? `${prisInklMoms} kr` : ""}
                 readOnly
                 disabled
+                className="bg-gray-100"
               />
             </div>
-
-            {/* Kategori med dropdown och möjlighet att lägga till ny */}
             <FormField
               control={form.control}
               name="kategori"
               render={({ field }) => {
                 const [isCustomCategory, setIsCustomCategory] = useState(false);
                 const [availableKategorier, setAvailableKategorier] = useState<string[]>([]);
-                const [loading, setLoading] = useState(false);
+                const [loadingKategorier, setLoadingKategorier] = useState(false);
                 
-                // Hämta kategorier när komponenten laddas
                 useEffect(() => {
                   const fetchKategorier = async () => {
-                    setLoading(true);
+                    setLoadingKategorier(true);
                     try {
-                      const response = await fetch('/api/prislista?pageSize=100');
+                      const response = await fetch('/api/prislista?pageSize=0'); // Hämta alla för kategorilista
+                      if (!response.ok) throw new Error("Kunde inte hämta kategorier");
                       const data = await response.json();
                       setAvailableKategorier(data.kategorier || []);
                       
-                      // Om field.value inte är tom och inte finns i kategorierna så aktivera custom
-                      if (field.value && !data.kategorier.includes(field.value)) {
+                      if (field.value && !data.kategorier.includes(field.value) && field.value !== '__NONE__') {
                         setIsCustomCategory(true);
+                      } else {
+                        setIsCustomCategory(false);
                       }
                     } catch (error) {
                       console.error('Fel vid hämtning av kategorier:', error);
                     } finally {
-                      setLoading(false);
+                      setLoadingKategorier(false);
                     }
                   };
                   
-                  fetchKategorier();
-                }, []);
+                  if(isOpen) fetchKategorier(); // Hämta bara när dialogen är öppen
+                }, [isOpen, field.value]); // Kör om när field.value ändras för att hantera extern återställning
                 
                 return (
                   <FormItem>
                     <FormLabel>Kategori</FormLabel>
                     {!isCustomCategory ? (
-                      <>
-                        <div className="flex space-x-2">
-                          <Select 
-                            onValueChange={(value) => {
-                              if (value === '__NEW__') {
-                                setIsCustomCategory(true);
-                                field.onChange('');
-                              } else if (value === '__NONE__') {
-                                field.onChange('');
-                              } else {
-                                field.onChange(value);
-                              }
-                            }}
-                            value={field.value || '__NONE__'}
-                            disabled={loading}
-                          >
-                            <FormControl>
-                              <SelectTrigger>
-                                <SelectValue placeholder="Välj kategori" />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              {loading ? (
-                                <div className="p-2 text-center">Laddar kategorier...</div>
-                              ) : (
-                                <>
-                                  <SelectItem value="__NONE__">Ingen kategori</SelectItem>
-                                  {availableKategorier.map((kategori) => (
-                                    <SelectItem key={kategori} value={kategori}>
-                                      {kategori}
-                                    </SelectItem>
-                                  ))}
-                                  <SelectItem value="__NEW__">+ Lägg till ny kategori</SelectItem>
-                                </>
-                              )}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      </>
+                        <Select 
+                          onValueChange={(value) => {
+                            if (value === '__NEW__') {
+                              setIsCustomCategory(true);
+                              field.onChange(''); // Rensa fältet för ny kategori
+                            } else if (value === '__NONE__') {
+                              field.onChange(''); // Sätt till tom sträng för "Ingen kategori"
+                            } else {
+                              field.onChange(value);
+                            }
+                          }}
+                          value={field.value || '__NONE__'} // Sätt __NONE__ om värdet är tomt
+                          disabled={loadingKategorier}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Välj kategori" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            {loadingKategorier ? (
+                              <div className="p-2 text-center">Laddar kategorier...</div>
+                            ) : (
+                              <>
+                                <SelectItem value="__NONE__">Ingen kategori</SelectItem>
+                                {availableKategorier.map((kategori) => (
+                                  <SelectItem key={kategori} value={kategori}>
+                                    {kategori}
+                                  </SelectItem>
+                                ))}
+                                <SelectItem value="__NEW__">+ Lägg till ny kategori</SelectItem>
+                              </>
+                            )}
+                          </SelectContent>
+                        </Select>
                     ) : (
                       <div className="flex space-x-2">
                         <FormControl>
                           <Input
                             placeholder="Ange ny kategori"
                             {...field}
-                            value={field.value || ""}
+                            value={field.value || ""} // Säkerställ att värdet inte är null/undefined
                           />
                         </FormControl>
                         <Button
@@ -401,7 +411,7 @@ export default function PrisDialog({
                           size="sm"
                           onClick={() => {
                             setIsCustomCategory(false);
-                            field.onChange('');
+                            field.onChange(''); // Rensa fältet när man avbryter
                           }}
                         >
                           Avbryt
@@ -413,8 +423,6 @@ export default function PrisDialog({
                 );
               }}
             />
-
-            {/* Artikelnummer */}
             <FormField
               control={form.control}
               name="artikelnummer"
@@ -432,17 +440,16 @@ export default function PrisDialog({
                 </FormItem>
               )}
             />
-
             <DialogFooter className="pt-4">
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => onOpenChange(false)}
-                disabled={loading}
+                onClick={() => onOpenChange(false)} // Anropa onOpenChange för att stänga
+                disabled={loading || isDeleting}
               >
                 Avbryt
               </Button>
-              <Button type="submit" disabled={loading}>
+              <Button type="submit" disabled={loading || isDeleting}>
                 {loading
                   ? "Sparar..."
                   : isEditing
@@ -454,5 +461,28 @@ export default function PrisDialog({
         </Form>
       </DialogContent>
     </Dialog>
+
+    <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Är du säker?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Vill du verkligen radera prisposten <span className="font-semibold">{defaultValues?.namn}</span>?
+              Denna åtgärd kan inte ångras.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setShowDeleteConfirm(false)} disabled={isDeleting}>Avbryt</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDelete}
+              disabled={isDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 focus-visible:ring-destructive/50"
+            >
+              {isDeleting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "Radera"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }

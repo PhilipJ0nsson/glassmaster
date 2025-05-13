@@ -1,6 +1,7 @@
 'use client';
 
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card"; // Importera CardContent
 import { Input } from "@/components/ui/input";
 import { ArbetsorderStatus } from "@prisma/client";
 import { PlusCircle, Search } from "lucide-react";
@@ -17,6 +18,7 @@ export interface ArbetsorderData {
   ROTprocentsats: number | null;
   arbetstid: number | null;
   material: string | null;
+  referensMärkning: string | null; // <-- Lade till denna rad
   ansvarigTeknikerId: number | null;
   status: ArbetsorderStatus;
   skapadAvId: number;
@@ -103,7 +105,6 @@ export default function ArbetsordrarPage() {
     fetchArbetsordrar();
   }, [pagination.page, pagination.pageSize, search, statusFilter, teknikerFilter, kundFilter]);
   
-  // Hämta kundinfo om vi har ett kundId
   useEffect(() => {
     if (kundFilter) {
       fetchKundInfo(kundFilter);
@@ -136,7 +137,6 @@ export default function ArbetsordrarPage() {
       
       const kund = await response.json();
       
-      // Skapa kundnamn baserat på typ
       let kundNamn = '';
       if (kund.kundTyp === 'PRIVAT' && kund.privatperson) {
         kundNamn = `${kund.privatperson.fornamn} ${kund.privatperson.efternamn}`;
@@ -198,17 +198,16 @@ export default function ArbetsordrarPage() {
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    // Sök utförs automatiskt via useEffect
   };
 
   const handleStatusFilterChange = (newStatus: ArbetsorderStatus | "ALLA") => {
     setStatusFilter(newStatus);
-    setPagination(prev => ({ ...prev, page: 1 })); // Återställ till sida 1 vid filterändring
+    setPagination(prev => ({ ...prev, page: 1 })); 
   };
 
   const handleTeknikerFilterChange = (tekniker: string) => {
     setTeknikerFilter(tekniker);
-    setPagination(prev => ({ ...prev, page: 1 })); // Återställ till sida 1 vid filterändring
+    setPagination(prev => ({ ...prev, page: 1 })); 
   };
 
   const handlePageChange = (newPage: number) => {
@@ -260,114 +259,119 @@ export default function ArbetsordrarPage() {
               : "Hantera arbetsordrar"}
           </p>
         </div>
-        <Link href={kundFilter ? `/arbetsordrar/ny?kundId=${kundFilter}` : "/arbetsordrar/ny"}>
-          <Button>
-            <PlusCircle className="mr-2 h-4 w-4" />
-            Ny arbetsorder
-          </Button>
-        </Link>
+        {/* "Ny arbetsorder" button is moved into the Card below for consistency */}
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        <button
-          onClick={() => handleStatusFilterChange("ALLA")}
-          className={`flex flex-col items-center justify-center p-3 border rounded-lg transition-colors ${
-            statusFilter === "ALLA" ? "border-primary bg-primary/10" : "border-gray-200 hover:bg-gray-50"
-          }`}
-        >
-          <span className="text-xl font-semibold">{Object.values(statusStats).reduce((a, b) => a + b, 0) || 0}</span>
-          <span className="text-sm text-gray-600">Alla</span>
-        </button>
-        
-        <button
-          onClick={() => handleStatusFilterChange(ArbetsorderStatus.OFFERT)}
-          className={`flex flex-col items-center justify-center p-3 border rounded-lg transition-colors ${
-            statusFilter === ArbetsorderStatus.OFFERT ? "border-primary bg-primary/10" : "border-gray-200 hover:bg-gray-50"
-          }`}
-        >
-          <span className="text-xl font-semibold">{statusStats[ArbetsorderStatus.OFFERT] || 0}</span>
-          <span className="text-sm text-gray-600">Offert</span>
-        </button>
-        
-        <button
-          onClick={() => handleStatusFilterChange(ArbetsorderStatus.BEKRAFTAD)}
-          className={`flex flex-col items-center justify-center p-3 border rounded-lg transition-colors ${
-            statusFilter === ArbetsorderStatus.BEKRAFTAD ? "border-primary bg-primary/10" : "border-gray-200 hover:bg-gray-50"
-          }`}
-        >
-          <span className="text-xl font-semibold">{statusStats[ArbetsorderStatus.BEKRAFTAD] || 0}</span>
-          <span className="text-sm text-gray-600">Bekräftad</span>
-        </button>
-        
-        <button
-          onClick={() => handleStatusFilterChange(ArbetsorderStatus.PAGAENDE)}
-          className={`flex flex-col items-center justify-center p-3 border rounded-lg transition-colors ${
-            statusFilter === ArbetsorderStatus.PAGAENDE ? "border-primary bg-primary/10" : "border-gray-200 hover:bg-gray-50"
-          }`}
-        >
-          <span className="text-xl font-semibold">{statusStats[ArbetsorderStatus.PAGAENDE] || 0}</span>
-          <span className="text-sm text-gray-600">Pågående</span>
-        </button>
-        
-        <button
-          onClick={() => handleStatusFilterChange(ArbetsorderStatus.SLUTFORD)}
-          className={`flex flex-col items-center justify-center p-3 border rounded-lg transition-colors ${
-            statusFilter === ArbetsorderStatus.SLUTFORD ? "border-primary bg-primary/10" : "border-gray-200 hover:bg-gray-50"
-          }`}
-        >
-          <span className="text-xl font-semibold">{statusStats[ArbetsorderStatus.SLUTFORD] || 0}</span>
-          <span className="text-sm text-gray-600">Slutförd</span>
-        </button>
-        
-        <button
-          onClick={() => handleStatusFilterChange(ArbetsorderStatus.FAKTURERAD)}
-          className={`flex flex-col items-center justify-center p-3 border rounded-lg transition-colors ${
-            statusFilter === ArbetsorderStatus.FAKTURERAD ? "border-primary bg-primary/10" : "border-gray-200 hover:bg-gray-50"
-          }`}
-        >
-          <span className="text-xl font-semibold">{statusStats[ArbetsorderStatus.FAKTURERAD] || 0}</span>
-          <span className="text-sm text-gray-600">Fakturerad</span>
-        </button>
-      </div>
+      <Card>
+        <CardContent className="space-y-4 pt-6">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+            <button
+              onClick={() => handleStatusFilterChange("ALLA")}
+              className={`flex flex-col items-center justify-center p-3 border rounded-lg transition-colors ${
+                statusFilter === "ALLA" ? "border-primary bg-primary/10" : "border-gray-200 hover:bg-gray-50"
+              }`}
+            >
+              <span className="text-xl font-semibold">{Object.values(statusStats).reduce((a, b) => a + b, 0) || 0}</span>
+              <span className="text-sm text-gray-600">Alla</span>
+            </button>
+            
+            <button
+              onClick={() => handleStatusFilterChange(ArbetsorderStatus.OFFERT)}
+              className={`flex flex-col items-center justify-center p-3 border rounded-lg transition-colors ${
+                statusFilter === ArbetsorderStatus.OFFERT ? "border-primary bg-primary/10" : "border-gray-200 hover:bg-gray-50"
+              }`}
+            >
+              <span className="text-xl font-semibold">{statusStats[ArbetsorderStatus.OFFERT] || 0}</span>
+              <span className="text-sm text-gray-600">Offert</span>
+            </button>
+            
+            <button
+              onClick={() => handleStatusFilterChange(ArbetsorderStatus.BEKRAFTAD)}
+              className={`flex flex-col items-center justify-center p-3 border rounded-lg transition-colors ${
+                statusFilter === ArbetsorderStatus.BEKRAFTAD ? "border-primary bg-primary/10" : "border-gray-200 hover:bg-gray-50"
+              }`}
+            >
+              <span className="text-xl font-semibold">{statusStats[ArbetsorderStatus.BEKRAFTAD] || 0}</span>
+              <span className="text-sm text-gray-600">Bekräftad</span>
+            </button>
+            
+            <button
+              onClick={() => handleStatusFilterChange(ArbetsorderStatus.PAGAENDE)}
+              className={`flex flex-col items-center justify-center p-3 border rounded-lg transition-colors ${
+                statusFilter === ArbetsorderStatus.PAGAENDE ? "border-primary bg-primary/10" : "border-gray-200 hover:bg-gray-50"
+              }`}
+            >
+              <span className="text-xl font-semibold">{statusStats[ArbetsorderStatus.PAGAENDE] || 0}</span>
+              <span className="text-sm text-gray-600">Pågående</span>
+            </button>
+            
+            <button
+              onClick={() => handleStatusFilterChange(ArbetsorderStatus.SLUTFORD)}
+              className={`flex flex-col items-center justify-center p-3 border rounded-lg transition-colors ${
+                statusFilter === ArbetsorderStatus.SLUTFORD ? "border-primary bg-primary/10" : "border-gray-200 hover:bg-gray-50"
+              }`}
+            >
+              <span className="text-xl font-semibold">{statusStats[ArbetsorderStatus.SLUTFORD] || 0}</span>
+              <span className="text-sm text-gray-600">Slutförd</span>
+            </button>
+            
+            <button
+              onClick={() => handleStatusFilterChange(ArbetsorderStatus.FAKTURERAD)}
+              className={`flex flex-col items-center justify-center p-3 border rounded-lg transition-colors ${
+                statusFilter === ArbetsorderStatus.FAKTURERAD ? "border-primary bg-primary/10" : "border-gray-200 hover:bg-gray-50"
+              }`}
+            >
+              <span className="text-xl font-semibold">{statusStats[ArbetsorderStatus.FAKTURERAD] || 0}</span>
+              <span className="text-sm text-gray-600">Fakturerad</span>
+            </button>
+          </div>
 
-      <div className="flex flex-col sm:flex-row gap-4 justify-between">
-        <form onSubmit={handleSearch} className="flex flex-1 gap-2">
-          <Input 
-            placeholder="Sök på namn, kundnummer..." 
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="max-w-[400px]"
+          <div className="flex flex-col sm:flex-row gap-4 justify-between items-center">
+            <form onSubmit={handleSearch} className="flex flex-1 gap-2">
+              <Input 
+                placeholder="Sök på namn, kundnummer..." 
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="max-w-[400px]"
+              />
+              <Button type="submit" variant="outline">
+                <Search className="h-4 w-4 mr-2" />
+                Sök
+              </Button>
+            </form>
+            
+            <div className="flex gap-2 items-center">
+              <select 
+                className="block rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 py-2 px-3 pr-8 h-9 text-sm" // Added h-9 and text-sm for consistency
+                value={teknikerFilter}
+                onChange={(e) => handleTeknikerFilterChange(e.target.value)}
+              >
+                <option value="">Alla tekniker</option>
+                {anstallda.map((anstalld) => (
+                  <option key={anstalld.id} value={anstalld.id}>
+                    {anstalld.fornamn} {anstalld.efternamn}
+                  </option>
+                ))}
+              </select>
+              <Link href={kundFilter ? `/arbetsordrar/ny?kundId=${kundFilter}` : "/arbetsordrar/ny"}>
+                <Button size="sm"> {/* Added size="sm" for consistency */}
+                  <PlusCircle className="mr-2 h-4 w-4" />
+                  Ny arbetsorder
+                </Button>
+              </Link>
+            </div>
+          </div>
+
+          <ArbetsorderLista 
+            arbetsordrar={arbetsordrar} 
+            pagination={pagination} 
+            loading={loading} 
+            onPageChange={handlePageChange} 
+            onRefresh={fetchArbetsordrar}
+            getStatusColor={getStatusColor}
           />
-          <Button type="submit" variant="outline">
-            <Search className="h-4 w-4 mr-2" />
-            Sök
-          </Button>
-        </form>
-        
-        <div className="flex gap-2">
-          <select 
-            className="block rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 py-2 px-3 pr-8"
-            value={teknikerFilter}
-            onChange={(e) => handleTeknikerFilterChange(e.target.value)}
-          >
-            <option value="">Alla tekniker</option>
-            {anstallda.map((anstalld) => (
-              <option key={anstalld.id} value={anstalld.id}>
-                {anstalld.fornamn} {anstalld.efternamn}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      <ArbetsorderLista 
-        arbetsordrar={arbetsordrar} 
-        pagination={pagination} 
-        loading={loading} 
-        onPageChange={handlePageChange} 
-        onRefresh={fetchArbetsordrar}
-        getStatusColor={getStatusColor}
-      />
+        </CardContent>
+      </Card>
     </div>
   );
 }
