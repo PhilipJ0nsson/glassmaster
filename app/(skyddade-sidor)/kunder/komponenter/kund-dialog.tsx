@@ -73,17 +73,16 @@ const baseKundSchema = z.object({
 const kundSchema = z.discriminatedUnion("kundTyp", [
   baseKundSchema.extend({
     kundTyp: z.literal(KundTyp.PRIVAT),
-    ...privatpersonSchema.shape, // Slå ihop shape direkt här
+    ...privatpersonSchema.shape, 
   }),
   baseKundSchema.extend({
     kundTyp: z.literal(KundTyp.FORETAG),
-    ...foretagSchema.shape, // Slå ihop shape direkt här
+    ...foretagSchema.shape, 
   }),
 ]);
 
 type KundFormValues = z.infer<typeof kundSchema>;
 
-// Definiera separata typer för varje del av discriminated union för enklare hantering
 type PrivatKundFormValues = Extract<KundFormValues, { kundTyp: 'PRIVAT' }>;
 type ForetagKundFormValues = Extract<KundFormValues, { kundTyp: 'FORETAG' }>;
 
@@ -91,7 +90,7 @@ type ForetagKundFormValues = Extract<KundFormValues, { kundTyp: 'FORETAG' }>;
 interface KundDialogProps {
   isOpen: boolean;
   onOpenChange: (isOpen: boolean) => void;
-  onKundSaved: () => void;
+  onKundSaved: (kundId?: number) => void; // Modified
   defaultValues?: Partial<KundFormValues> | KundData | null; 
   isEditing?: boolean;
 }
@@ -99,7 +98,7 @@ interface KundDialogProps {
 export function KundDialog({
   isOpen,
   onOpenChange,
-  onKundSaved,
+  onKundSaved, // Used
   defaultValues,
   isEditing = false,
 }: KundDialogProps) {
@@ -110,7 +109,7 @@ export function KundDialog({
 
   const getInitialFormValues = (): KundFormValues => {
     const base = {
-      id: undefined, // Nollställ id för nya kunder
+      id: undefined, 
       telefonnummer: "",
       epost: "",
       adress: "",
@@ -149,14 +148,13 @@ export function KundDialog({
             };
         }
     }
-    // Standard för ny kund (Privat)
     return {
       ...base,
       kundTyp: KundTyp.PRIVAT,
       fornamn: "",
       efternamn: "",
       personnummer: "",
-    } as PrivatKundFormValues; // Type assertion för default
+    } as PrivatKundFormValues; 
   };
   
   const form = useForm<KundFormValues>({
@@ -168,7 +166,7 @@ export function KundDialog({
     if (isOpen) {
       form.reset(getInitialFormValues());
     }
-  }, [isOpen, defaultValues, isEditing]); // form är inte nödvändig som dependency här
+  }, [isOpen, defaultValues, isEditing]);
 
 
   const kundTyp = form.watch("kundTyp");
@@ -193,7 +191,13 @@ export function KundDialog({
       }
 
       toast.success(isEditing ? "Kunden har uppdaterats" : "Kunden har sparats");
-      onKundSaved();
+      
+      if (!isEditing) {
+        const newKundData = await response.json(); 
+        onKundSaved(newKundData.id); 
+      } else {
+        onKundSaved(data.id); 
+      }
     } catch (error: any) {
       console.error(`Fel vid ${isEditing ? 'uppdatering' : 'sparande'} av kund:`, error);
       toast.error(error.message || `Kunde inte ${isEditing ? 'uppdatera' : 'spara'} kunden`);
@@ -205,9 +209,11 @@ export function KundDialog({
   const handleDelete = async () => {
     if (!isEditing || !defaultValues || !('id' in defaultValues) || !defaultValues.id) return;
 
+    const deletedKundId = defaultValues.id; 
+
     setIsDeleting(true);
     try {
-      const response = await fetch(`/api/kunder/${defaultValues.id}?permanent=true`, { // permanent=true förtydligar, även om API:et inte använder det
+      const response = await fetch(`/api/kunder/${defaultValues.id}?permanent=true`, { 
         method: 'DELETE',
       });
 
@@ -216,7 +222,7 @@ export function KundDialog({
         throw new Error(errorData.error || 'Kunde inte radera kunden.');
       }
       toast.success('Kunden har raderats.');
-      onKundSaved(); 
+      onKundSaved(deletedKundId); 
     } catch (error: any) {
       toast.error(error.message || 'Kunde inte radera kunden');
       console.error('Fel vid radering av kund:', error);
@@ -241,7 +247,7 @@ export function KundDialog({
                 {isEditing ? "Uppdatera kundens uppgifter." : "Fyll i information för den nya kunden."}
               </DialogDescription>
             </div>
-            {canDelete && defaultValues && 'id' in defaultValues && ( // Se till att defaultValues har id
+            {canDelete && defaultValues && 'id' in defaultValues && ( 
               <Button
                 variant="ghost"
                 size="icon"
@@ -271,7 +277,6 @@ export function KundDialog({
                         field.onChange(newKundTyp);
                         const currentValues = form.getValues();
                         
-                        // Skapa en bas för återställning
                         const resetBase: Partial<KundFormValues> = {
                             id: currentValues.id,
                             telefonnummer: currentValues.telefonnummer,

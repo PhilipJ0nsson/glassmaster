@@ -1,17 +1,42 @@
+// /app/(skyddade-sidor)/arbetsordrar/[id]/redigera/page.tsx
 'use client';
 
 import { Button } from "@/components/ui/button";
-import ArbetsorderFormular from "../../komponenter/arbetsorder-formular";
+import ArbetsorderFormular, { KundForFormular, ProcessedArbetsorderData } from "../../komponenter/arbetsorder-formular";
 import { ArrowLeft, Loader2 } from "lucide-react";
-import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useRouter, useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import { ArbetsorderStatus } from "@prisma/client";
+
+interface ArbetsorderMedKundData {
+    id: number;
+    kundId: number; 
+    status: ArbetsorderStatus;
+    ROT: boolean;
+    ROTprocentsats?: number | null;
+    material?: string | null;
+    referensMärkning?: string | null;
+    ansvarigTeknikerId?: number | null;
+    orderrader: Array<{
+        id?: number;
+        prislistaId: number; // Kommer som number från API
+        antal: number;
+        bredd?: number | null;
+        hojd?: number | null;
+        langd?: number | null;
+        tid?: number | null;
+        rabattProcent?: number | null;
+        kommentar?: string | null;
+    }>;
+    kund: KundForFormular; 
+}
+
 
 export default function RedigeraArbetsorderPage() {
   const params = useParams();
   const router = useRouter();
-  const [arbetsorder, setArbetsorder] = useState<any | null>(null);
+  const [arbetsorder, setArbetsorder] = useState<ArbetsorderMedKundData | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -44,7 +69,7 @@ export default function RedigeraArbetsorderPage() {
     }
   }, [params.id, router]);
 
-  const handleSave = async (data: any) => {
+  const handleSave = async (data: ProcessedArbetsorderData) => { 
     try {
       const response = await fetch(`/api/arbetsordrar/${params.id}`, {
         method: 'PUT',
@@ -60,7 +85,7 @@ export default function RedigeraArbetsorderPage() {
       }
       
       toast.success('Arbetsorder uppdaterad');
-      router.push(`/arbetsordrar/${params.id}`);
+      router.push(`/arbetsordrar/${params.id}`); 
     } catch (error: any) {
       toast.error('Kunde inte uppdatera arbetsorder: ' + error.message);
       console.error('Fel vid uppdatering av arbetsorder:', error);
@@ -80,21 +105,40 @@ export default function RedigeraArbetsorderPage() {
     return (
       <div className="flex flex-col items-center justify-center h-full">
         <p>Arbetsordern hittades inte</p>
-        <Link href="/arbetsordrar">
-          <Button className="mt-4">Tillbaka till arbetsordrarna</Button>
-        </Link>
+        <Button onClick={() => router.back()} className="mt-4">Tillbaka</Button>
       </div>
     );
   }
 
+  const initialFormValues = {
+    kund: arbetsorder.kund,
+    kundId: arbetsorder.kund.id.toString(),
+    status: arbetsorder.status,
+    ROT: arbetsorder.ROT,
+    ROTprocentsats: arbetsorder.ROTprocentsats?.toString() || "30",
+    material: arbetsorder.material || "",
+    referensMärkning: arbetsorder.referensMärkning || "",
+    ansvarigTeknikerId: arbetsorder.ansvarigTeknikerId?.toString() || "none",
+    orderrader: arbetsorder.orderrader.map(rad => ({
+        id: rad.id,
+        prislistaId: rad.prislistaId?.toString() || "", // API skickar number, formulär behöver string
+        antal: rad.antal?.toString() || "1",
+        bredd: rad.bredd?.toString() || "",
+        hojd: rad.hojd?.toString() || "",
+        langd: rad.langd?.toString() || "",
+        tid: rad.tid?.toString() || "",
+        rabattProcent: rad.rabattProcent?.toString() || "0",
+        kommentar: rad.kommentar || "",
+    }))
+  };
+
+
   return (
     <div className="space-y-6">
       <div className="flex items-center space-x-4">
-        <Link href={`/arbetsordrar/${params.id}`}>
-          <Button variant="outline" size="icon">
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-        </Link>
+        <Button variant="outline" size="icon" onClick={() => router.back()}>
+          <ArrowLeft className="h-4 w-4" />
+        </Button>
         <div>
           <h1 className="text-3xl font-bold tracking-tight mb-1">
             Redigera arbetsorder #{arbetsorder.id}
@@ -107,7 +151,7 @@ export default function RedigeraArbetsorderPage() {
       
       <ArbetsorderFormular 
         onSave={handleSave} 
-        initialData={arbetsorder}
+        initialData={initialFormValues}
         isEditing={true}
       />
     </div>

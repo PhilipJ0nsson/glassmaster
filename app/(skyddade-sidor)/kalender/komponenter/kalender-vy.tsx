@@ -1,6 +1,9 @@
+// /app/(skyddade-sidor)/kalender/komponenter/kalender-vy.tsx
 'use client';
 
+import React, { useRef, useEffect } from 'react';
 import FullCalendar from '@fullcalendar/react';
+import { CalendarApi } from '@fullcalendar/core';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import interactionPlugin from '@fullcalendar/interaction';
@@ -13,6 +16,8 @@ interface KalenderVyProps {
   loading: boolean;
   onDateClick: (date: Date) => void;
   onEventClick: (eventId: number) => void;
+  onEventChange: (eventId: string, newStart: Date, newEnd: Date) => Promise<boolean>;
+  onCalendarApiReady: (api: CalendarApi) => void;
   locale: Locale;
   ansvarigFilter: number | null;
   buttonText: {
@@ -29,44 +34,37 @@ export default function KalenderVy({
   loading,
   onDateClick,
   onEventClick,
+  onEventChange,
+  onCalendarApiReady,
   locale,
   ansvarigFilter,
   buttonText
 }: KalenderVyProps) {
   
-  const handleDateClick = (info: any) => {
-    // Skapa en ny Date från datumet
-    const clickedDate = new Date(info.date);
-    onDateClick(clickedDate);
-  };
+  const calendarComponentRef = useRef<FullCalendar>(null);
 
-  const handleEventClick = (info: any) => {
-    // Anropa förälderns onEventClick callback med händelsens ID
-    const eventId = parseInt(info.event.id);
-    if (!isNaN(eventId)) {
-      onEventClick(eventId);
+  useEffect(() => {
+    if (calendarComponentRef.current) {
+      const api = calendarComponentRef.current.getApi();
+      onCalendarApiReady(api);
     }
-  };
+  }, [onCalendarApiReady]);
 
-  if (loading) {
-    return (
-      <div className="flex justify-center items-center h-96">
-        <Loader2 className="h-8 w-8 animate-spin mr-2" />
-        <span>Laddar kalender...</span>
-      </div>
-    );
-  }
+
+  const handleDateClick = (info: any) => { /* ... */ const clickedDate = new Date(info.date); onDateClick(clickedDate); };
+  const handleEventClick = (info: any) => { /* ... */ const eventId = parseInt(info.event.id); if (!isNaN(eventId)) { onEventClick(eventId); } };
+  const handleEventDrop = async (dropInfo: any) => { /* ... */ const eventId = dropInfo.event.id; const newStart = dropInfo.event.start; const newEnd = dropInfo.event.end || newStart; const success = await onEventChange(eventId, newStart, newEnd); if (!success) { dropInfo.revert(); } };
+  const handleEventResize = async (resizeInfo: any) => { /* ... */ const eventId = resizeInfo.event.id; const newStart = resizeInfo.event.start; const newEnd = resizeInfo.event.end; const success = await onEventChange(eventId, newStart, newEnd); if (!success) { resizeInfo.revert(); } };
+
+  if (loading) { /* ... */ return <div className="flex justify-center items-center h-96"><Loader2 className="h-8 w-8 animate-spin mr-2" /><span>Laddar kalender...</span></div>; }
 
   return (
     <div className="flex-1 h-[700px]">
       <FullCalendar
+        ref={calendarComponentRef}
         plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
         initialView="timeGridWeek"
-        headerToolbar={{
-          left: 'prev,next today',
-          center: 'title',
-          right: 'dayGridMonth,timeGridWeek,timeGridDay'
-        }}
+        headerToolbar={{ left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,timeGridDay' }}
         events={events}
         locale={locale.code}
         buttonText={buttonText}
@@ -75,7 +73,9 @@ export default function KalenderVy({
         nowIndicator={true}
         selectable={true}
         selectMirror={true}
-        editable={false}
+        editable={true} 
+        eventDrop={handleEventDrop}     
+        eventResize={handleEventResize} 
         dayMaxEvents={true}
         weekends={true}
         allDaySlot={true}
@@ -83,72 +83,7 @@ export default function KalenderVy({
         slotMaxTime="18:00:00"
         height="100%"
         expandRows={true}
-        eventTimeFormat={{
-          hour: '2-digit',
-          minute: '2-digit',
-          meridiem: false
-        }}
-        eventDidMount={(info) => {
-          // Skapa tooltips for hover
-          const tooltip = document.createElement('div');
-          tooltip.classList.add('event-tooltip');
-          tooltip.style.position = 'absolute';
-          tooltip.style.zIndex = '10000';
-          tooltip.style.backgroundColor = 'white';
-          tooltip.style.border = '1px solid #ddd';
-          tooltip.style.borderRadius = '4px';
-          tooltip.style.padding = '8px';
-          tooltip.style.boxShadow = '0 2px 6px rgba(0,0,0,0.1)';
-          tooltip.style.display = 'none';
-          tooltip.style.maxWidth = '300px';
-          
-          // Skapa innehåll för tooltip
-          const event = info.event;
-          const props = event.extendedProps;
-          
-          let content = `<div class="font-bold mb-1">${event.title}</div>`;
-          
-          if (props.beskrivning) {
-            content += `<div class="mb-1">${props.beskrivning}</div>`;
-          }
-          
-          // Ta bort "Du är ansvarig/medarbetare" text (ej nödvändig eftersom det framgår från övrig information)
-          
-          content += `<div class="text-sm text-gray-500 mb-1">Ansvarig: ${props.ansvarig}</div>`;
-          
-          if (props.kund) {
-            content += `<div class="text-sm text-gray-500 mb-1">Kund: ${props.kund}</div>`;
-          }
-          
-          if (props.arbetsorderId) {
-            content += `<div class="text-sm text-gray-500 mb-1">Arbetsorder: #${props.arbetsorderId}</div>`;
-          }
-          
-          if (props.medarbetare && props.medarbetare.length > 0) {
-            content += `<div class="text-sm text-gray-500 mb-1">Medarbetare: ${props.medarbetare.map((m: {id: number; namn: string}) => m.namn).join(', ')}</div>`;
-          }
-          
-          tooltip.innerHTML = content;
-          document.body.appendChild(tooltip);
-          
-          // Visa tooltip vid musöver
-          info.el.addEventListener('mouseover', () => {
-            const rect = info.el.getBoundingClientRect();
-            tooltip.style.top = `${rect.bottom + window.scrollY + 5}px`;
-            tooltip.style.left = `${rect.left + window.scrollX}px`;
-            tooltip.style.display = 'block';
-          });
-          
-          // Dölj tooltip vid musut
-          info.el.addEventListener('mouseout', () => {
-            tooltip.style.display = 'none';
-          });
-          
-          // Ta bort tooltip när händelsen avmonteras
-          return () => {
-            document.body.removeChild(tooltip);
-          };
-        }}
+        eventTimeFormat={{ hour: '2-digit', minute: '2-digit', meridiem: false }}
       />
     </div>
   );

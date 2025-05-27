@@ -11,9 +11,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Loader2 } from "lucide-react"; // Ta bort Edit och Trash
+import { Loader2 } from "lucide-react";
 import { PrislistaData } from "../page";
-// Ta bort PrisDialog import, den hanteras i PrislistaPage nu
 
 interface PrisListaProps {
   prisposter: PrislistaData[];
@@ -26,7 +25,7 @@ interface PrisListaProps {
   loading: boolean;
   onPageChange: (page: number) => void;
   onRefresh: () => void;
-  onEdit: (prispost: PrislistaData) => void; // Ny prop för att signalera redigering
+  onEdit: (prispost: PrislistaData) => void;
 }
 
 export default function PrisLista({
@@ -35,9 +34,8 @@ export default function PrisLista({
   loading,
   onPageChange,
   onRefresh,
-  onEdit, // Ny prop
+  onEdit,
 }: PrisListaProps) {
-  // Ta bort editPrispost, isEditOpen, deletingId och handleDelete. De hanteras i PrisDialog / PrislistaPage
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('sv-SE', {
@@ -46,8 +44,6 @@ export default function PrisLista({
       minimumFractionDigits: 2,
     }).format(amount);
   };
-
-  // Ta bort handlePrisSaved, det hanteras i PrislistaPage nu
 
   return (
     <>
@@ -61,15 +57,14 @@ export default function PrisLista({
                 <TableHead>Kategori</TableHead>
                 <TableHead>Prissättning</TableHead>
                 <TableHead className="text-right">Pris (exkl. moms)</TableHead>
-                <TableHead className="text-right">Momssats</TableHead>
+                {/* <TableHead className="text-right">Momssats</TableHead>  <-- TA BORT DENNA RAD */}
                 <TableHead className="text-right">Pris (inkl. moms)</TableHead>
-                {/* <TableHead className="text-right">Åtgärder</TableHead> Ta bort Åtgärder-kolumnen */}
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center py-10"> {/* Uppdatera colSpan */}
+                  <TableCell colSpan={6} className="text-center py-10"> {/* Ändra colSpan till 6 */}
                     <div className="flex justify-center items-center">
                       <Loader2 className="h-6 w-6 animate-spin mr-2" />
                       <span>Laddar prisposter...</span>
@@ -78,7 +73,7 @@ export default function PrisLista({
                 </TableRow>
               ) : prisposter.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center py-10"> {/* Uppdatera colSpan */}
+                  <TableCell colSpan={6} className="text-center py-10"> {/* Ändra colSpan till 6 */}
                     Inga prisposter hittades.
                   </TableCell>
                 </TableRow>
@@ -86,8 +81,8 @@ export default function PrisLista({
                 prisposter.map((prispost) => (
                   <TableRow 
                     key={prispost.id} 
-                    className="hover:bg-gray-50 cursor-pointer" // Gör raden klickbar
-                    onClick={() => onEdit(prispost)} // Anropa onEdit när raden klickas
+                    className="hover:bg-gray-50 cursor-pointer"
+                    onClick={() => onEdit(prispost)}
                   >
                     <TableCell className="font-medium">
                       {prispost.namn}
@@ -117,17 +112,14 @@ export default function PrisLista({
                     <TableCell className="text-right">
                       {formatCurrency(prispost.prisExklMoms)}
                     </TableCell>
-                    <TableCell className="text-right">
+                    {/* 
+                    <TableCell className="text-right">  <-- TA BORT DENNA CELL
                       {prispost.momssats}%
                     </TableCell>
+                    */}
                     <TableCell className="text-right">
                       {formatCurrency(prispost.prisInklMoms)}
                     </TableCell>
-                    {/* 
-                    <TableCell className="text-right">
-                      Ta bort åtgärdsknapparna härifrån
-                    </TableCell>
-                    */}
                   </TableRow>
                 ))
               )}
@@ -189,8 +181,6 @@ export default function PrisLista({
           </div>
         )}
       </Card>
-
-      {/* Ta bort PrisDialog härifrån, den hanteras i PrislistaPage nu */}
     </>
   );
 }

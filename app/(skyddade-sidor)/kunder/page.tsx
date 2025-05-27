@@ -1,10 +1,11 @@
-// File: /Users/nav/Projects/glassmaestro/glassmaster/app/(skyddade-sidor)/kunder/page.tsx
+// /app/(skyddade-sidor)/kunder/page.tsx
 'use client';
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { KundTyp } from "@prisma/client";
-import { PlusCircle, Search } from "lucide-react";
+import { PlusCircle, Search, Users, Building, UserCheck } from "lucide-react"; 
+import { useRouter } from "next/navigation"; 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { KundLista } from "./komponenter/kund-lista";
@@ -53,8 +54,10 @@ export default function KunderPage() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<KundTyp | "ALLA">("ALLA");
   const [dialogOpen, setDialogOpen] = useState(false); 
-  const [selectedKundForDialog, setSelectedKundForDialog] = useState<KundData | null>(null); // Omdöpt för tydlighet
-  const [isEditingDialog, setIsEditingDialog] = useState(false); // Omdöpt för tydlighet
+  const [selectedKundForDialog, setSelectedKundForDialog] = useState<KundData | null>(null);
+  const [isEditingDialog, setIsEditingDialog] = useState(false);
+
+  const router = useRouter(); 
 
   const fetchKunder = async () => {
     try {
@@ -92,6 +95,7 @@ export default function KunderPage() {
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
+    setPagination(prev => ({ ...prev, page: 1 }));
   };
 
   const handleFilterChange = (newFilter: KundTyp | "ALLA") => {
@@ -114,61 +118,70 @@ export default function KunderPage() {
     setSelectedKundForDialog(null);
     setIsEditingDialog(false);
     if (refresh) {
-      fetchKunder(); // Anropas från KundDialog när den sparat
+      fetchKunder();
     }
   };
 
+  const handleKundRowNavigation = (kund: KundData) => {
+    router.push(`/kunder/${kund.id}`);
+  };
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col md:flex-row justify-between md:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight mb-1">Kunder</h1>
+          <h1 className="text-3xl font-bold tracking-tight mb-1">Kundregister</h1>
           <p className="text-muted-foreground">
-            Hantera alla kunder i systemet
+            Hantera och se alla kunder i systemet.
           </p>
         </div>
       </div>
 
       <Card>
-        <CardContent className="space-y-4 pt-6">
-          <div className="flex flex-col sm:flex-row gap-4 justify-between items-center">
-            <form onSubmit={handleSearch} className="flex flex-1 gap-2">
+        <CardContent className="space-y-6 pt-6">
+          <div className="flex flex-col md:flex-row gap-4 justify-between items-center">
+            <form onSubmit={handleSearch} className="flex w-full md:w-auto flex-1 gap-2">
               <Input 
-                placeholder="Sök på namn, telefon, e-post..." 
+                placeholder="Sök på namn, telefon, e-post, adress..." 
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="max-w-[400px]"
+                className="max-w-sm flex-grow"
               />
-              <Button type="submit" variant="outline">
+              <Button type="submit" variant="secondary" className="shadow-sm">
                 <Search className="h-4 w-4 mr-2" />
                 Sök
               </Button>
             </form>
             
-            <div className="flex gap-2 flex-wrap items-center">
+            <div className="flex gap-2 flex-wrap items-center justify-start md:justify-end w-full md:w-auto">
               <Button 
                 variant={filter === "ALLA" ? "default" : "outline"}
                 onClick={() => handleFilterChange("ALLA")}
                 size="sm"
+                className="shadow-sm data-[state=active]:ring-2 data-[state=active]:ring-primary data-[state=active]:ring-offset-1"
               >
+                <Users className="h-4 w-4 mr-1.5" />
                 Alla
               </Button>
               <Button 
                 variant={filter === KundTyp.PRIVAT ? "default" : "outline"}
                 onClick={() => handleFilterChange(KundTyp.PRIVAT)}
                 size="sm"
+                className="shadow-sm data-[state=active]:ring-2 data-[state=active]:ring-primary data-[state=active]:ring-offset-1"
               >
+                <UserCheck className="h-4 w-4 mr-1.5" />
                 Privat
               </Button>
               <Button 
                 variant={filter === KundTyp.FORETAG ? "default" : "outline"}
                 onClick={() => handleFilterChange(KundTyp.FORETAG)}
                 size="sm"
+                className="shadow-sm data-[state=active]:ring-2 data-[state=active]:ring-primary data-[state=active]:ring-offset-1"
               >
+                <Building className="h-4 w-4 mr-1.5" />
                 Företag
               </Button>
-              <Button onClick={handleOpenNewKundDialog} size="sm">
+              <Button onClick={handleOpenNewKundDialog} size="sm" className="bg-blue-600 hover:bg-blue-700 text-white shadow-md">
                 <PlusCircle className="mr-2 h-4 w-4" />
                 Ny kund
               </Button>
@@ -180,23 +193,24 @@ export default function KunderPage() {
             pagination={pagination} 
             loading={loading} 
             onPageChange={handlePageChange} 
-            onRefresh={fetchKunder}
-            // onEdit tas bort härifrån
+            // onRefresh={fetchKunder} // DENNA RAD TAS BORT
+            onKundRowClick={handleKundRowNavigation}
           />
         </CardContent>
       </Card>
 
-      {/* Denna dialog används nu bara för att SKAPA nya kunder från denna sida */}
-      {/* Redigering sker från KundDetalj-sidan */}
       <KundDialog 
-        isOpen={dialogOpen && !isEditingDialog} // Öppna bara om inte isEditingDialog (vilket sätts från KundDetalj)
+        isOpen={dialogOpen} 
         onOpenChange={(open) => {
           if (!open) handleDialogClose();
           else setDialogOpen(open);
         }} 
-        onKundSaved={() => handleDialogClose(true)}
-        defaultValues={null} // Alltid null för ny kund från denna sida
-        isEditing={false}    // Alltid false för ny kund från denna sida
+        onKundSaved={(kundId?: number) => {
+          fetchKunder();
+          handleDialogClose(false); 
+        }}
+        defaultValues={selectedKundForDialog} 
+        isEditing={isEditingDialog}    
       />
     </div>
   );

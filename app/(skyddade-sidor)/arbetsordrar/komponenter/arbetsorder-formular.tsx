@@ -1,10 +1,13 @@
+// File: app/(skyddade-sidor)/arbetsordrar/komponenter/arbetsorder-formular.tsx
+// Fullständig kod med korrigering för nästlat formulär.
+
 'use client';
 
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card"; 
 import {
-  Form,
+  Form, // Importeras från react-hook-form via vår ui/form
   FormControl,
   FormDescription,
   FormField,
@@ -21,27 +24,30 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { ArbetsorderStatus } from "@prisma/client";
-import { CircleMinus, CirclePlus, Loader2, Save, Trash } from "lucide-react";
+import { ArbetsorderStatus, PrissattningTyp, Kund as PrismaKund, Privatperson as PrismaPrivatperson, Foretag as PrismaForetag } from "@prisma/client";
+import { CirclePlus, Edit, Loader2, Save, Trash, User, Settings, Package, Briefcase, Link2, Info } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useFieldArray, useForm } from "react-hook-form";
 import { z } from "zod";
+import { useRouter } from "next/navigation"; 
+
+export interface KundForFormular extends PrismaKund {
+  privatperson?: PrismaPrivatperson | null;
+  foretag?: PrismaForetag | null;
+}
 
 const statusMap = {
+  [ArbetsorderStatus.MATNING]: "Mätning",
   [ArbetsorderStatus.OFFERT]: "Offert",
-  [ArbetsorderStatus.BEKRAFTAD]: "Bekräftad",
-  [ArbetsorderStatus.PAGAENDE]: "Pågående",
+  [ArbetsorderStatus.AKTIV]: "Aktiv",
   [ArbetsorderStatus.SLUTFORD]: "Slutförd",
   [ArbetsorderStatus.FAKTURERAD]: "Fakturerad",
   [ArbetsorderStatus.AVBRUTEN]: "Avbruten",
 };
 
-// Formulärschema
 const orderradSchema = z.object({
   id: z.number().optional(),
-  prislistaId: z.string({
-    required_error: "Välj en produkt/tjänst",
-  }),
+  prislistaId: z.string({ required_error: "Välj en produkt/tjänst" }).min(1, "Välj en produkt/tjänst"),
   antal: z.string().min(1, "Antal måste vara minst 1"),
   bredd: z.string().optional(),
   hojd: z.string().optional(),
@@ -50,1137 +56,517 @@ const orderradSchema = z.object({
   rabattProcent: z.string().default("0"),
   kommentar: z.string().optional(),
 });
+type OrderradFormValues = z.infer<typeof orderradSchema>;
+const defaultOrderradValues: OrderradFormValues = { prislistaId: "", antal: "1", rabattProcent: "0", kommentar: "", bredd: "", hojd: "", langd: "", tid: "" };
 
 const arbetsorderSchema = z.object({
-  kundId: z.string({
-    required_error: "Välj en kund",
-  }),
-  status: z.nativeEnum(ArbetsorderStatus).default(ArbetsorderStatus.OFFERT),
+  kundId: z.string(), 
+  status: z.nativeEnum(ArbetsorderStatus).default(ArbetsorderStatus.MATNING),
   ROT: z.boolean().default(false),
   ROTprocentsats: z.string().optional(),
   material: z.string().optional(),
   referensMärkning: z.string().optional(),
-  ansvarigTeknikerId: z.string().optional().transform((val) => (val === "none" ? null : val)),
+  ansvarigTeknikerId: z.string().optional().transform((val) => (val === "none" || val === "" ? null : val)),
   orderrader: z.array(orderradSchema),
 });
-
 type ArbetsorderFormValues = z.infer<typeof arbetsorderSchema>;
 
-interface KundInfo {
-  id: number;
-  kundTyp: string;
-  telefonnummer: string;
-  epost?: string | null;
-  adress: string;
-  kommentarer?: string | null;
-  privatperson?: {
-    fornamn: string;
-    efternamn: string;
-    personnummer?: string | null;
-  } | null;
-  foretag?: {
-    foretagsnamn: string;
-    organisationsnummer?: string | null;
-    kontaktpersonFornamn?: string | null;
-    kontaktpersonEfternamn?: string | null;
-    fakturaadress?: string | null;
-  } | null;
-  skapadDatum: string;
-  uppdateradDatum: string;
+export interface ProcessedArbetsorderData {
+  kundId: string; 
+  status: ArbetsorderStatus;
+  ROT: boolean;
+  ROTprocentsats: number | null;
+  material?: string | null;
+  referensMärkning?: string | null;
+  ansvarigTeknikerId?: string | null; 
+  orderrader: Array<{
+    id?: number;
+    prislistaId: string; 
+    antal: number;
+    bredd?: number | null;
+    hojd?: number | null;
+    langd?: number | null;
+    tid?: number | null;
+    rabattProcent: number;
+    kommentar?: string | null;
+  }>;
 }
 
-interface PrisInfo {
-  id: number;
-  namn: string;
-  prisExklMoms: number;
-  momssats: number;
-  prisInklMoms: number;
-  kategori: string | null;
-  artikelnummer: string | null;
-  prissattningTyp?: string;
+interface PrisInfo { id: number; namn: string; prisExklMoms: number; momssats: number; prisInklMoms: number; kategori: string | null; artikelnummer: string | null; prissattningTyp?: PrissattningTyp; }
+
+interface ArbetsorderFormularProps { 
+  onSave: (data: ProcessedArbetsorderData) => void; 
+  initialData?: Partial<ArbetsorderFormValues> & { kund?: KundForFormular; orderrader?: any[] };
+  isEditing?: boolean; 
 }
 
-interface ArbetsorderFormularProps {
-  onSave: (data: any) => void; // Använd any för att undvika typfel vid konvertering
-  initialData?: any;
-  isEditing?: boolean;
-}
-
-export default function ArbetsorderFormular({
-  onSave,
-  initialData,
-  isEditing = false,
-}: ArbetsorderFormularProps) {
+export default function ArbetsorderFormular({ onSave, initialData, isEditing = false }: ArbetsorderFormularProps) {
+  const router = useRouter(); 
   const [loading, setLoading] = useState(false);
-  const [kunder, setKunder] = useState<KundInfo[]>([]);
-  const [loadingKunder, setLoadingKunder] = useState(true);
   const [prisposter, setPrisposter] = useState<PrisInfo[]>([]);
   const [loadingPrisposter, setLoadingPrisposter] = useState(true);
   const [kategorier, setKategorier] = useState<string[]>([]);
   const [anstallda, setAnstallda] = useState<any[]>([]);
   const [loadingAnstallda, setLoadingAnstallda] = useState(true);
   const [totalSumma, setTotalSumma] = useState({ exklMoms: 0, inklMoms: 0 });
+  const [editingOrderlineIndex, setEditingOrderlineIndex] = useState<number | null>(null);
+  const [totalTimKostnadExklMoms, setTotalTimKostnadExklMoms] = useState(0);
 
-  // Initiera formuläret
-  const form = useForm<ArbetsorderFormValues>({
-    resolver: zodResolver(arbetsorderSchema),
-    defaultValues: {
-      kundId: "",
-      status: ArbetsorderStatus.OFFERT,
-      ROT: false,
-      ROTprocentsats: "30",
-      material: "",
-      ansvarigTeknikerId: "none",
-      orderrader: [],
-    },
+  const kundAttVisa = initialData?.kund;
+
+  const form = useForm<ArbetsorderFormValues>({ 
+    resolver: zodResolver(arbetsorderSchema), 
+    defaultValues: { 
+        kundId: initialData?.kund?.id.toString() || "", 
+        status: initialData?.status || ArbetsorderStatus.MATNING, 
+        ROT: initialData?.ROT || false, 
+        ROTprocentsats: initialData?.ROTprocentsats?.toString() || "30",
+        material: initialData?.material || "", 
+        referensMärkning: initialData?.referensMärkning || "",
+        ansvarigTeknikerId: initialData?.ansvarigTeknikerId?.toString() || "none", 
+        orderrader: initialData?.orderrader || [] 
+    } 
   });
+  const { fields, append, remove, update } = useFieldArray({ control: form.control, name: "orderrader" });
+  const currentOrderradForm = useForm<OrderradFormValues>({ resolver: zodResolver(orderradSchema), defaultValues: defaultOrderradValues });
 
-  // Hantera orderrader som en array i formuläret
-  const { fields, append, remove } = useFieldArray({
-    control: form.control,
-    name: "orderrader",
-  });
-
-  // Hämta data från servern när komponenten laddas
-  useEffect(() => {
-    fetchKunder();
-    fetchPrisposter();
-    fetchAnstallda();
+  useEffect(() => { 
+    fetchPrisposter(); 
+    fetchAnstallda(); 
   }, []);
-
-  // Sätt formulärvärden om initialData finns
+  
   useEffect(() => {
-    if (initialData && isEditing) {
-      const formData = {
-        kundId: initialData.kundId.toString(),
-        status: initialData.status,
-        ROT: initialData.ROT,
-        ROTprocentsats: initialData.ROTprocentsats?.toString() || "30",
-        material: initialData.material || "",
-        ansvarigTeknikerId: initialData.ansvarigTeknikerId?.toString() || "none",
-        orderrader: initialData.orderrader.map((rad: any) => ({
-          id: rad.id,
-          prislistaId: rad.prislistaId.toString(),
-          antal: rad.antal.toString(),
-          bredd: rad.bredd?.toString() || "",
-          hojd: rad.hojd?.toString() || "",
-          langd: rad.langd?.toString() || "",
-          tid: rad.tid?.toString() || "",
-          rabattProcent: rad.rabattProcent.toString(),
-          kommentar: rad.kommentar || "",
-        })),
-      };
-      
-      form.reset(formData);
+    let newDefaultValues: Partial<ArbetsorderFormValues> = {
+        status: ArbetsorderStatus.MATNING, 
+        ROT: false, 
+        ROTprocentsats: "30",
+        material: "", 
+        referensMärkning: "",
+        ansvarigTeknikerId: "none", 
+        orderrader: [],
+    };
+
+    if (initialData?.kund?.id) {
+        newDefaultValues.kundId = initialData.kund.id.toString();
     }
+
+    if (isEditing && initialData) {
+        newDefaultValues = {
+            ...newDefaultValues, // Behåll default från ovan om initialData saknar något
+            kundId: initialData.kundId || newDefaultValues.kundId,
+            status: initialData.status || ArbetsorderStatus.MATNING, 
+            ROT: initialData.ROT || false, 
+            ROTprocentsats: initialData.ROTprocentsats?.toString() || "30", 
+            material: initialData.material || "", 
+            referensMärkning: initialData.referensMärkning || "",
+            ansvarigTeknikerId: initialData.ansvarigTeknikerId?.toString() || "none",
+            orderrader: initialData.orderrader 
+            ? initialData.orderrader.map((rad: any) => ({ 
+                id: rad.id, 
+                prislistaId: rad.prislistaId?.toString() || "", 
+                antal: rad.antal?.toString() || "1", 
+                bredd: rad.bredd?.toString() || "", 
+                hojd: rad.hojd?.toString() || "", 
+                langd: rad.langd?.toString() || "", 
+                tid: rad.tid?.toString() || "", 
+                rabattProcent: rad.rabattProcent?.toString() || "0", 
+                kommentar: rad.kommentar || "" 
+                }))
+            : [],
+        };
+    } else if (initialData) { // För ny order med initialData (t.ex. bara kund)
+        newDefaultValues = {
+            ...newDefaultValues,
+            kundId: initialData.kundId || newDefaultValues.kundId,
+            // andra fält från initialData om de finns
+        };
+    }
+    form.reset(newDefaultValues as ArbetsorderFormValues);
   }, [initialData, isEditing, form]);
 
-  // Hämta kunder
-  const fetchKunder = async () => {
-    try {
-      setLoadingKunder(true);
-      const response = await fetch('/api/kunder');
-      
-      if (!response.ok) {
-        throw new Error('Kunde inte hämta kunder');
-      }
-      
-      const data = await response.json();
-      setKunder(data.kunder);
-    } catch (error) {
-      console.error('Fel vid hämtning av kunder:', error);
-    } finally {
-      setLoadingKunder(false);
+  const fetchPrisposter = async () => { try { setLoadingPrisposter(true); const r = await fetch('/api/prislista?pageSize=10000'); if (!r.ok) throw Error('Kunde inte hämta prisposter'); const d = await r.json(); setPrisposter(d.prisposter); setKategorier(d.kategorier || []); } catch (e) { console.error(e); toast.error("Kunde inte hämta prislistan."); } finally { setLoadingPrisposter(false); } };
+  const fetchAnstallda = async () => { try { setLoadingAnstallda(true); const r = await fetch('/api/anvandare'); if (!r.ok) throw Error('Kunde inte hämta anställda'); setAnstallda((await r.json()).anvandare); } catch (e) { console.error(e); toast.error("Kunde inte hämta anställda."); } finally { setLoadingAnstallda(false); } };
+
+  const calculateRowPriceExclMoms = (rad: OrderradFormValues) => {
+    const prispost = prisposter.find((p) => p.id.toString() === rad.prislistaId);
+    if (!prispost) return 0;
+    const antal = parseInt(String(rad.antal || '1'));
+    const rabatt = parseFloat(String(rad.rabattProcent || '0')) / 100;
+    let mangd = 1;
+    const prissattningTyp = prispost.prissattningTyp || 'ST';
+    switch (prissattningTyp) {
+      case 'M2':
+        const bredd = parseFloat(String(rad.bredd || '0')) / 1000;
+        const hojd = parseFloat(String(rad.hojd || '0')) / 1000;
+        mangd = bredd && hojd ? bredd * hojd : 1;
+        break;
+      case 'M':
+        mangd = parseFloat(String(rad.langd || '0')) / 1000 || 1;
+        break;
+      case 'TIM':
+        mangd = parseFloat(String(rad.tid || '0')) || 1;
+        break;
     }
+    return prispost.prisExklMoms * antal * mangd * (1 - rabatt);
   };
 
-  // Hämta prisposter
-  const fetchPrisposter = async () => {
-    try {
-      setLoadingPrisposter(true);
-      const response = await fetch('/api/prislista');
-      
-      if (!response.ok) {
-        throw new Error('Kunde inte hämta prisposter');
-      }
-      
-      const data = await response.json();
-      setPrisposter(data.prisposter);
-      setKategorier(data.kategorier || []);
-    } catch (error) {
-      console.error('Fel vid hämtning av prisposter:', error);
-    } finally {
-      setLoadingPrisposter(false);
-    }
-  };
-
-  // Hämta anställda
-  const fetchAnstallda = async () => {
-    try {
-      setLoadingAnstallda(true);
-      const response = await fetch('/api/anvandare');
-      
-      if (!response.ok) {
-        throw new Error('Kunde inte hämta anställda');
-      }
-      
-      const data = await response.json();
-      setAnstallda(data.anvandare);
-    } catch (error) {
-      console.error('Fel vid hämtning av anställda:', error);
-    } finally {
-      setLoadingAnstallda(false);
-    }
-  };
-
-  // Beräkna totalsumma baserat på orderrader
+  const watchedOrderrader = form.watch("orderrader");
+  
   useEffect(() => {
-    const orderrader = form.getValues().orderrader || [];
+    const orderrader = watchedOrderrader || [];
     let summaExklMoms = 0;
     let summaInklMoms = 0;
+    let timKostnadExkl = 0;
     
     orderrader.forEach((rad) => {
       const prispost = prisposter.find((p) => p.id.toString() === rad.prislistaId);
-      
       if (prispost) {
         const antal = parseInt(String(rad.antal || '1'));
         const rabatt = parseFloat(String(rad.rabattProcent || '0')) / 100;
-        
-        // Beräkna priset baserat på prissättningstyp
         let mangd = 1;
-        
-        // Kontrollera att prissattningTyp existerar
         const prissattningTyp = prispost.prissattningTyp || 'ST';
-        console.log(`Calculating price for product: ${prispost.namn}, type: ${prissattningTyp}`);
         
+        let radPrisExklMoms = 0;
+        let radPrisInklMoms = 0;
+
         switch (prissattningTyp) {
           case 'M2':
-            // Kvadratmeterpris (bredd × höjd)
-            let breddMm = parseFloat(String(rad.bredd || '0'));
-            let hojdMm = parseFloat(String(rad.hojd || '0'));
-            
-            // Konvertera från millimeter till meter
-            const bredd = breddMm / 1000;
-            const hojd = hojdMm / 1000;
-            
-            // Beräkna area i kvadratmeter
+            const bredd = parseFloat(String(rad.bredd || '0')) / 1000;
+            const hojd = parseFloat(String(rad.hojd || '0')) / 1000;
             mangd = bredd && hojd ? bredd * hojd : 1;
-            console.log(`M2 calculation: ${breddMm}mm × ${hojdMm}mm = ${bredd}m × ${hojd}m = ${mangd}m²`);
             break;
-          
           case 'M':
-            // Meterpris (längd)
-            let langdMm = parseFloat(String(rad.langd || '0'));
-            
-            // Konvertera från millimeter till meter
-            const langd = langdMm / 1000;
-            
-            mangd = langd || 1;
-            console.log(`M calculation: ${langdMm}mm = ${langd}m`);
+            mangd = parseFloat(String(rad.langd || '0')) / 1000 || 1;
             break;
-          
           case 'TIM':
-            // Timpris (tid)
-            const tid = parseFloat(String(rad.tid || '0'));
-            mangd = tid || 1;
-            console.log(`TIM calculation: ${mangd} timmar`);
+            mangd = parseFloat(String(rad.tid || '0')) || 1;
+            radPrisExklMoms = prispost.prisExklMoms * antal * mangd * (1 - rabatt); 
+            timKostnadExkl += radPrisExklMoms;
             break;
-          
-          case 'ST':
-          default:
-            // Styckpris - använder bara antal
-            mangd = 1;
-            console.log(`ST calculation: standard styckpris (mangd = 1)`);
-            break;
+          case 'ST': default: mangd = 1; break;
         }
         
-        // Beräkna radpriser
-        const radExklMoms = prispost.prisExklMoms * antal * mangd * (1 - rabatt);
-        const radInklMoms = prispost.prisInklMoms * antal * mangd * (1 - rabatt);
+        if (prissattningTyp !== 'TIM') {
+            radPrisExklMoms = prispost.prisExklMoms * antal * mangd * (1 - rabatt);
+        }
+        radPrisInklMoms = prispost.prisInklMoms * antal * mangd * (1 - rabatt);
         
-        console.log(`Row price calculation: 
-          Base price: ${prispost.prisExklMoms} kr
-          Quantity factor: ${mangd}
-          Units: ${antal}
-          Discount: ${rabatt * 100}%
-          Row price (excl. VAT): ${radExklMoms} kr
-          Row price (incl. VAT): ${radInklMoms} kr
-        `);
-        
-        summaExklMoms += radExklMoms;
-        summaInklMoms += radInklMoms;
+        summaExklMoms += radPrisExklMoms;
+        summaInklMoms += radPrisInklMoms;
       }
     });
-    
-    console.log(`Total calculation: 
-      Total (excl. VAT): ${summaExklMoms} kr
-      Total (incl. VAT): ${summaInklMoms} kr
-    `);
-    
-    setTotalSumma({
-      exklMoms: summaExklMoms,
-      inklMoms: summaInklMoms,
-    });
-  }, [form.watch("orderrader"), prisposter]);
+    setTotalSumma({ exklMoms: summaExklMoms, inklMoms: summaInklMoms });
+    setTotalTimKostnadExklMoms(timKostnadExkl);
 
-  // Format valuta
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('sv-SE', {
-      style: 'currency',
-      currency: 'SEK',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    }).format(amount);
-  };
+  }, [watchedOrderrader, prisposter]);
 
-  // Hämta kundnamn baserat på ID
-  const getKundNamn = (kundId: string) => {
-    const kund = kunder.find((k) => k.id.toString() === kundId);
-    
-    if (!kund) return '';
-    
-    if (kund.privatperson) {
-      return `${kund.privatperson.fornamn} ${kund.privatperson.efternamn}`;
-    } else if (kund.foretag) {
-      return kund.foretag.foretagsnamn;
-    }
-    
-    return `Kund #${kund.id}`;
-  };
+  const formatCurrency = (a: number) => new Intl.NumberFormat('sv-SE', { style: 'currency', currency: 'SEK', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(a);
+  const formatCurrencyNoDecimals = (a: number) => new Intl.NumberFormat('sv-SE', { style: 'currency', currency: 'SEK', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(a);
 
-  // Lägg till ny orderrad
-  const handleAddOrderrad = () => {
-    append({
-      prislistaId: '',
-      antal: '1',
-      rabattProcent: '0',
-      kommentar: '',
-    });
-  };
-
-  // Spara arbetsorder
+  const handleAddOrUpdateOrderrad = (data: OrderradFormValues) => { if (editingOrderlineIndex !== null) { const o = form.getValues().orderrader[editingOrderlineIndex]; update(editingOrderlineIndex, { ...o, ...data, id: o.id }); } else { append(data); } currentOrderradForm.reset(defaultOrderradValues); setEditingOrderlineIndex(null); };
+  const handleEditOrderrad = (i: number) => { currentOrderradForm.reset({ ...defaultOrderradValues, ...form.getValues().orderrader[i] }); setEditingOrderlineIndex(i); };
+  const handleCancelEdit = () => { currentOrderradForm.reset(defaultOrderradValues); setEditingOrderlineIndex(null); };
+  const handleRemoveOrderrad = (i: number) => { remove(i); if (editingOrderlineIndex === i) handleCancelEdit(); };
+  
   const onSubmit = async (data: ArbetsorderFormValues) => {
-    setLoading(true);
-    
+    if (!data.kundId) {
+        toast.error("Ett fel uppstod: Kund-ID saknas. Gå tillbaka och försök igen.");
+        console.error("Form submit attempted without kundId:", data);
+        return;
+    }
+
+    setLoading(true); 
     try {
-      // Konvertera strängar till nummer där det behövs
-      const processedData = {
-        ...data,
-        ROTprocentsats: data.ROTprocentsats ? parseFloat(data.ROTprocentsats) : null,
-        ansvarigTeknikerId: data.ansvarigTeknikerId === "none" ? null : data.ansvarigTeknikerId,
-        orderrader: data.orderrader.map(rad => ({
-          ...rad,
-          antal: parseInt(rad.antal) || 1,
-          bredd: rad.bredd ? parseFloat(rad.bredd) : null,
-          hojd: rad.hojd ? parseFloat(rad.hojd) : null,
-          langd: rad.langd ? parseFloat(rad.langd) : null,
-          tid: rad.tid ? parseFloat(rad.tid) : null,
-          rabattProcent: parseFloat(rad.rabattProcent) || 0,
-        })),
+      let rotProcentsatsNum: number | null = null;
+      if (data.ROT) {
+        if (!data.ROTprocentsats || data.ROTprocentsats.trim() === "") {
+            form.setError("ROTprocentsats", { type: "manual", message: "Procentsats måste anges för ROT." });
+            setLoading(false);
+            return;
+        }
+        rotProcentsatsNum = parseFloat(data.ROTprocentsats);
+        if (isNaN(rotProcentsatsNum) || rotProcentsatsNum < 0 || rotProcentsatsNum > 100) {
+            form.setError("ROTprocentsats", { type: "manual", message: "Ogiltig procentsats (0-100)." });
+            setLoading(false);
+            return;
+        }
+      }
+
+      const processedData: ProcessedArbetsorderData = { 
+        kundId: data.kundId, 
+        status: data.status,
+        ROT: data.ROT,
+        ROTprocentsats: data.ROT ? rotProcentsatsNum : null,
+        material: data.material || null,
+        referensMärkning: data.referensMärkning || null,
+        ansvarigTeknikerId: data.ansvarigTeknikerId === "none" || data.ansvarigTeknikerId === "" ? null : data.ansvarigTeknikerId, 
+        orderrader: data.orderrader.map(r => ({ 
+            id: r.id, 
+            prislistaId: r.prislistaId,
+            antal: parseInt(r.antal) || 1, 
+            bredd: r.bredd ? parseFloat(r.bredd) : null, 
+            hojd: r.hojd ? parseFloat(r.hojd) : null, 
+            langd: r.langd ? parseFloat(r.langd) : null, 
+            tid: r.tid ? parseFloat(r.tid) : null, 
+            rabattProcent: parseFloat(r.rabattProcent || "0") || 0,
+            kommentar: r.kommentar || null,
+        })) 
       };
-      
       await onSave(processedData);
-    } catch (error) {
-      console.error('Fel vid sparande av arbetsorder:', error);
-    } finally {
-      setLoading(false);
+    } catch (e) { 
+      console.error(e); 
+      toast.error("Fel vid sparande."); 
+    } finally { 
+      setLoading(false); 
     }
   };
+  const selectedProductForEditorId = currentOrderradForm.watch("prislistaId");
+  const selectedProductForEditor = prisposter.find(p => p.id.toString() === selectedProductForEditorId);
 
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Kunduppgifter */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Kunduppgifter</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-            <FormField
-              control={form.control}
-              name="kundId"
-              render={({ field }) => {
-                const [searchTerm, setSearchTerm] = useState("");
-                const [kundTyp, setKundTyp] = useState<string | null>(null);
-                
-                // Hämta fullständig kunddata baserat på valt ID
-                const selectedKund = kunder.find(k => k.id.toString() === field.value);
-                
-                return (
-                  <FormItem>
-                    <FormLabel>Kund *</FormLabel>
-                    
-                    {/* Kundtyp-flikar */}
-                    <div className="flex flex-wrap gap-1 mb-2">
-                      <Button 
-                        type="button"
-                        size="sm"
-                        variant={kundTyp === null ? "default" : "outline"}
-                        onClick={() => setKundTyp(null)}
-                        className="text-xs"
-                      >
-                        Alla
-                      </Button>
-                      <Button 
-                        type="button"
-                        size="sm"
-                        variant={kundTyp === "PRIVAT" ? "default" : "outline"}
-                        onClick={() => setKundTyp("PRIVAT")}
-                        className="text-xs"
-                      >
-                        Privatpersoner
-                      </Button>
-                      <Button 
-                        type="button"
-                        size="sm"
-                        variant={kundTyp === "FORETAG" ? "default" : "outline"}
-                        onClick={() => setKundTyp("FORETAG")}
-                        className="text-xs"
-                      >
-                        Företag
-                      </Button>
-                    </div>
-                    
-                    <Select 
-                      onValueChange={field.onChange} 
-                      defaultValue={field.value || ""}
-                      disabled={loadingKunder}
-                    >
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Välj kund" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {loadingKunder ? (
-                          <div className="flex items-center justify-center p-2">
-                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                            <span>Laddar kunder...</span>
-                          </div>
-                        ) : (
-                          <>
-                            <div className="px-2 pb-2">
-                              <Input
-                                type="text"
-                                placeholder="Sök kunder..."
-                                value={searchTerm}
-                                onChange={e => setSearchTerm(e.target.value)}
-                                className="w-full"
-                              />
-                            </div>
-                            
-                            {/* Filtrera kunder baserat på sökterm och typ */}
-                            {kunder
-                              .filter(kund => {
-                                // Filtrera baserat på kundtyp
-                                if (kundTyp === "PRIVAT" && !kund.privatperson) return false;
-                                if (kundTyp === "FORETAG" && !kund.foretag) return false;
-                                
-                                // Filtrera baserat på sökterm
-                                if (!searchTerm) return true;
-                                
-                                const searchTermLower = searchTerm.toLowerCase();
-                                
-                                // Sök i privatperson
-                                if (kund.privatperson) {
-                                  return kund.privatperson.fornamn.toLowerCase().includes(searchTermLower) ||
-                                        kund.privatperson.efternamn.toLowerCase().includes(searchTermLower);
-                                }
-                                
-                                // Sök i företag
-                                if (kund.foretag) {
-                                  return kund.foretag.foretagsnamn.toLowerCase().includes(searchTermLower);
-                                }
-                                
-                                return false;
-                              })
-                              .length === 0 ? (
-                                <div className="p-2 text-center text-gray-500">
-                                  Inga kunder hittades
-                                </div>
-                              ) : (
-                                kunder
-                                  .filter(kund => {
-                                    // Filtrera baserat på kundtyp
-                                    if (kundTyp === "PRIVAT" && !kund.privatperson) return false;
-                                    if (kundTyp === "FORETAG" && !kund.foretag) return false;
-                                    
-                                    // Filtrera baserat på sökterm
-                                    if (!searchTerm) return true;
-                                    
-                                    const searchTermLower = searchTerm.toLowerCase();
-                                    
-                                    // Sök i privatperson
-                                    if (kund.privatperson) {
-                                      return kund.privatperson.fornamn.toLowerCase().includes(searchTermLower) ||
-                                            kund.privatperson.efternamn.toLowerCase().includes(searchTermLower);
-                                    }
-                                    
-                                    // Sök i företag
-                                    if (kund.foretag) {
-                                      return kund.foretag.foretagsnamn.toLowerCase().includes(searchTermLower);
-                                    }
-                                    
-                                    return false;
-                                  })
-                                  .map((kund) => (
-                                    <SelectItem key={kund.id} value={kund.id.toString()}>
-                                      {kund.privatperson
-                                        ? `${kund.privatperson.fornamn} ${kund.privatperson.efternamn} (Privat)`
-                                        : kund.foretag
-                                        ? `${kund.foretag.foretagsnamn} (Företag)`
-                                        : `Kund #${kund.id}`}
-                                    </SelectItem>
-                                  ))
-                              )
-                            }
-                          </>
-                        )}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                    
-                    {/* Visa kundinformation om en kund är vald */}
-                    {selectedKund && (
-                      <div className="mt-4 border rounded-md p-3 bg-gray-50">
-                        <div className="font-medium mb-1">
-                          {selectedKund.privatperson
-                            ? `${selectedKund.privatperson.fornamn} ${selectedKund.privatperson.efternamn}`
-                            : selectedKund.foretag
-                            ? selectedKund.foretag.foretagsnamn
-                            : `Kund #${selectedKund.id}`}
-                        </div>
-                        
-                        <div className="grid grid-cols-1 gap-1 text-sm text-gray-600">
-                          <div className="flex items-start">
-                            <span className="w-20 flex-shrink-0">Adress:</span>
-                            <span>{selectedKund.adress}</span>
-                          </div>
-                          
-                          <div className="flex items-center">
-                            <span className="w-20 flex-shrink-0">Telefon:</span>
-                            <span>{selectedKund.telefonnummer}</span>
-                          </div>
-                          
-                          {selectedKund.epost && (
-                            <div className="flex items-center">
-                              <span className="w-20 flex-shrink-0">E-post:</span>
-                              <span>{selectedKund.epost}</span>
-                            </div>
-                          )}
-                          
-                          {selectedKund.privatperson?.personnummer && (
-                            <div className="flex items-center">
-                              <span className="w-20 flex-shrink-0">Personnr:</span>
-                              <span>{selectedKund.privatperson.personnummer}</span>
-                            </div>
-                          )}
-                          
-                          {selectedKund.foretag?.organisationsnummer && (
-                            <div className="flex items-center">
-                              <span className="w-20 flex-shrink-0">Org.nr:</span>
-                              <span>{selectedKund.foretag.organisationsnummer}</span>
-                            </div>
-                          )}
-                          
-                          {/* Visa kontaktperson om det finns */}
-                          {selectedKund.foretag?.kontaktpersonFornamn && (
-                            <div className="flex items-center">
-                              <span className="w-20 flex-shrink-0">Kontakt:</span>
-                              <span>
-                                {selectedKund.foretag.kontaktpersonFornamn} {selectedKund.foretag.kontaktpersonEfternamn || ''}
-                              </span>
-                            </div>
-                          )}
-                          
-                          {/* Visa fakturaadress om den skiljer sig från ordinarie adress */}
-                          {selectedKund.foretag?.fakturaadress && selectedKund.foretag.fakturaadress !== selectedKund.adress && (
-                            <div className="flex items-start">
-                              <span className="w-20 flex-shrink-0">Faktura:</span>
-                              <span>{selectedKund.foretag.fakturaadress}</span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </FormItem>
-                );
-              }}
-            />
-              
-              {form.watch("kundId") && (
-                <div className="flex justify-end">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => {
-                      // Redirect to customer details page
-                      window.open(`/kunder/${form.getValues().kundId}`, '_blank');
-                    }}
-                  >
-                    Visa kunduppgifter
-                  </Button>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+        <div className="p-6 md:p-8 border rounded-xl bg-card text-card-foreground shadow-lg">
           
-          {/* Arbetsorderinformation */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Arbetsorderinformation</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 gap-4">
-                <FormField
-                  control={form.control}
-                  name="status"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Status *</FormLabel>
-                      <Select 
-                        onValueChange={field.onChange} 
-                        defaultValue={field.value || ArbetsorderStatus.OFFERT}
-                      >
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Välj status" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {Object.entries(statusMap).map(([value, label]) => (
-                            <SelectItem key={value} value={value}>
-                              {label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                
-                <FormField
-                  control={form.control}
-                  name="ansvarigTeknikerId"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Ansvarig tekniker</FormLabel>
-                      <Select 
-                        onValueChange={field.onChange} 
-                        defaultValue={field.value || "none"}
-                      >
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Välj tekniker" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="none">Ingen tilldelad</SelectItem>
-                          {loadingAnstallda ? (
-                            <div className="flex items-center justify-center p-2">
-                              <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                              <span>Laddar...</span>
-                            </div>
-                          ) : (
-                            anstallda.map((anstalld) => (
-                              <SelectItem key={anstalld.id} value={anstalld.id.toString()}>
-                                {anstalld.fornamn} {anstalld.efternamn}
-                              </SelectItem>
-                            ))
-                          )}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <div className="space-y-4">
-                  <FormField
-                    control={form.control}
-                    name="ROT"
-                    render={({ field }) => (
-                      <FormItem className="flex flex-row items-start space-x-3 space-y-0 rounded-md border p-4">
-                        <FormControl>
-                          <input
-                            type="checkbox"
-                            className="h-4 w-4 mt-1"
-                            checked={field.value}
-                            onChange={field.onChange}
-                          />
-                        </FormControl>
-                        <div className="space-y-1 leading-none">
-                          <FormLabel>ROT-avdrag</FormLabel>
-                          <FormDescription>
-                            Markera om ROT-avdrag ska användas
-                          </FormDescription>
-                        </div>
-                      </FormItem>
-                    )}
-                  />
-                  
-                  {form.watch("ROT") && (
-                    <FormField
-                      control={form.control}
-                      name="ROTprocentsats"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>ROT-procentsats (%)</FormLabel>
-                          <FormControl>
-                            <Input
-                              type="number"
-                              min="0"
-                              max="100"
-                              placeholder="Procentsats"
-                              {...field}
-                              value={field.value || ''}
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  )}
-                </div>
-                
-                <FormField
-                  control={form.control}
-                  name="material"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Material/Anteckningar</FormLabel>
-                      <FormControl>
-                        <Input
-                          placeholder="Beskrivning av material eller andra anteckningar"
-                          {...field}
-                          value={field.value || ''}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                
-                <FormField
-                  control={form.control}
-                  name="referensMärkning"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Referens/Märkning</FormLabel>
-                      <FormControl>
-                        <Input
-                          placeholder="Kundernas referens eller märkning för fakturering"
-                          {...field}
-                          value={field.value || ''}
-                        />
-                      </FormControl>
-                      <FormDescription>
-                        Ange referensperson eller märkning som ska visas på fakturan
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-        
-        {/* Orderrader */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle>Produkter och tjänster</CardTitle>
-            <Button type="button" onClick={handleAddOrderrad}>
-              <CirclePlus className="h-4 w-4 mr-2" />
-              Lägg till rad
-            </Button>
-          </CardHeader>
-          <CardContent>
-            {fields.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                <p>Inga orderrader tillagda. Klicka på "Lägg till rad" för att lägga till produkter eller tjänster.</p>
-              </div>
-            ) : (
-              <div className="space-y-6">
-                {fields.map((field, index) => (
-                  <div
-                    key={field.id}
-                    className="grid grid-cols-1 md:grid-cols-12 gap-4 border-b pb-4"
-                  >
-                    <div className="md:col-span-5">
-                      <FormField
-                        control={form.control}
-                        name={`orderrader.${index}.prislistaId`}
-                        render={({ field }) => {
-                          const [searchTerm, setSearchTerm] = useState("");
-                          const [selectedKategori, setSelectedKategori] = useState<string | null>(null);
-                          
-                          // Filtrera produkter baserat på sökterm om den finns
-                          const filteredPrisposter = searchTerm 
-                            ? prisposter.filter(p => 
-                                p.namn.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                                (p.artikelnummer && p.artikelnummer.toLowerCase().includes(searchTerm.toLowerCase()))
-                              )
-                            : prisposter;
-                          
-                          // Uppdatera kategori när en produkt väljs
-                          const updateSelectedValue = (value: string) => {
-                            field.onChange(value);
-                            // Hitta kategori för vald produkt om det finns en
-                            const selectedProduct = prisposter.find(p => p.id.toString() === value);
-                            if (selectedProduct) {
-                              setSelectedKategori(null); // Återställ kategorivalet efter val
-                            }
-                          };
-                          
-                          return (
-                            <FormItem>
-                              <FormLabel>Produkt/Tjänst *</FormLabel>
-                              
-                              {/* Kategori-flikar */}
-                              <div className="flex flex-wrap gap-1 mb-2">
-                                <Button 
-                                  type="button"
-                                  size="sm"
-                                  variant={selectedKategori === null ? "default" : "outline"}
-                                  onClick={() => setSelectedKategori(null)}
-                                  className="text-xs"
-                                >
-                                  Alla
-                                </Button>
-                                {kategorier.map(kategori => (
-                                  <Button 
-                                    type="button"
-                                    key={kategori} 
-                                    size="sm"
-                                    variant={selectedKategori === kategori ? "default" : "outline"}
-                                    onClick={() => setSelectedKategori(kategori)}
-                                    className="text-xs"
-                                  >
-                                    {kategori}
-                                  </Button>
-                                ))}
-                                {prisposter.some(p => !p.kategori) && (
-                                  <Button 
-                                    type="button"
-                                    size="sm"
-                                    variant={selectedKategori === '__NONE__' ? "default" : "outline"}
-                                    onClick={() => setSelectedKategori('__NONE__')}
-                                    className="text-xs"
-                                  >
-                                    Övriga
-                                  </Button>
-                                )}
-                              </div>
-                              
-                              <Select 
-                                onValueChange={updateSelectedValue} 
-                                value={field.value || ""}
-                              >
-                                <FormControl>
-                                  <SelectTrigger>
-                                    <SelectValue placeholder="Välj produkt/tjänst" />
-                                  </SelectTrigger>
-                                </FormControl>
-                                <SelectContent>
-                                  <div className="px-2 pb-2">
-                                    <Input
-                                      type="text"
-                                      placeholder="Sök produkter..."
-                                      value={searchTerm}
-                                      onChange={e => setSearchTerm(e.target.value)}
-                                      className="w-full"
-                                    />
-                                  </div>
-                                  
-                                  {/* Visa "Inga produkter hittades" om filtreringen ger tomt resultat */}
-                                  {filteredPrisposter
-                                    .filter(p => {
-                                      if (selectedKategori === null) return true;
-                                      if (selectedKategori === '__NONE__') return !p.kategori;
-                                      return p.kategori === selectedKategori;
-                                    }).length === 0 ? (
-                                      <div className="p-2 text-center text-gray-500">
-                                        Inga produkter hittades
-                                      </div>
-                                    ) : (
-                                      filteredPrisposter
-                                        .filter(p => {
-                                          // Kategorifiltrering
-                                          const kategoriMatch = selectedKategori === null ? true :
-                                            selectedKategori === '__NONE__' ? !p.kategori :
-                                            p.kategori === selectedKategori;
-                                          
-                                          // Sökfiltrering - kollar både namn och artikelnummer
-                                          const searchMatch = !searchTerm ? true :
-                                            p.namn.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                                            (p.artikelnummer && p.artikelnummer.toLowerCase().includes(searchTerm.toLowerCase()));
-                                          
-                                          return kategoriMatch && searchMatch;
-                                        })
-                                        .map(prispost => (
-                                          <SelectItem
-                                            key={prispost.id}
-                                            value={prispost.id.toString()}
-                                          >
-                                            <div className="flex justify-between w-full">
-                                              <span>
-                                                {prispost.namn}
-                                                {prispost.artikelnummer && (
-                                                  <span className="text-xs ml-1 text-gray-500">
-                                                    ({prispost.artikelnummer})
-                                                  </span>
-                                                )}
-                                              </span>
-                                              <span className="text-gray-600">
-                                                {formatCurrency(prispost.prisInklMoms)}
-                                              </span>
-                                            </div>
-                                          </SelectItem>
-                                        ))
-                                    )}
-                                </SelectContent>
-                              </Select>
-                              <FormMessage />
-                            </FormItem>
-                          );
-                        }}
-                      />
-                    </div>
-
-                    <div className="md:col-span-6 flex flex-wrap gap-2">
-                      {/* Antal */}
-                      <div className="w-1/12 min-w-[70px]">
-                        <FormField
-                          control={form.control}
-                          name={`orderrader.${index}.antal`}
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Antal</FormLabel>
-                              <FormControl>
-                                <Input
-                                  type="number"
-                                  min="1"
-                                  step="1"
-                                  {...field}
-                                  value={field.value || '1'}
-                                />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      </div>
-                      
-                      {/* Rabatt */}
-                      <div className="w-1/12 min-w-[80px]">
-                        <FormField
-                          control={form.control}
-                          name={`orderrader.${index}.rabattProcent`}
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Rabatt (%)</FormLabel>
-                              <FormControl>
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  max="100"
-                                  step="1"
-                                  {...field}
-                                  value={field.value || '0'}
-                                />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      </div>
-                      
-                      {/* Dynamiska fält baserade på produkttyp */}
-                      {(() => {
-                        // Hämta vald produkt
-                        const selectedProduct = prisposter.find(
-                          p => p.id.toString() === form.getValues(`orderrader.${index}.prislistaId`)
-                        );
+          <div className="mb-10">
+            <h2 className="text-2xl font-semibold tracking-tight mb-6 flex items-center text-primary">
+              <Briefcase className="h-7 w-7 mr-3" />
+              Orderinformation
+            </h2>
+            <div className="grid grid-cols-1 lg:grid-cols-5 gap-x-8 gap-y-8">
+              <div className="lg:col-span-3 space-y-3">
+                <h3 className="text-xl font-medium flex items-center text-gray-700 dark:text-gray-300">
+                  <User className="h-5 w-5 mr-2" /> Kundinformation
+                </h3>
+                {kundAttVisa ? (
+                    <div className="p-4 border rounded-md bg-slate-50 dark:bg-slate-800/30 text-sm text-gray-700 dark:text-gray-300 space-y-1.5 shadow-sm"> 
+                        <h4 className="font-semibold text-base mb-2 text-gray-800 dark:text-gray-200">
+                            {kundAttVisa.privatperson 
+                                ? `${kundAttVisa.privatperson.fornamn} ${kundAttVisa.privatperson.efternamn}` 
+                                : kundAttVisa.foretag?.foretagsnamn}
+                            <span className="text-xs text-muted-foreground ml-2">({kundAttVisa.kundTyp === "PRIVAT" ? "Privat" : "Företag"})</span>
+                        </h4>
+                        <div><strong className="font-medium text-gray-500 dark:text-gray-400 w-[80px] inline-block">Adress:</strong> {kundAttVisa.adress}</div>
+                        <div><strong className="font-medium text-gray-500 dark:text-gray-400 w-[80px] inline-block">Telefon:</strong> {kundAttVisa.telefonnummer}</div>
+                        {kundAttVisa.epost && <div><strong className="font-medium text-gray-500 dark:text-gray-400 w-[80px] inline-block">E-post:</strong> {kundAttVisa.epost}</div>}
+                        {kundAttVisa.privatperson?.personnummer && <div><strong className="font-medium text-gray-500 dark:text-gray-400 w-[80px] inline-block">Personnr:</strong> {kundAttVisa.privatperson.personnummer}</div>}
+                        {kundAttVisa.foretag?.organisationsnummer && <div><strong className="font-medium text-gray-500 dark:text-gray-400 w-[80px] inline-block">Org.nr:</strong> {kundAttVisa.foretag.organisationsnummer}</div>}
+                        {kundAttVisa.foretag?.fakturaadress && kundAttVisa.foretag.fakturaadress !== kundAttVisa.adress && <div><strong className="font-medium text-gray-500 dark:text-gray-400 w-[80px] inline-block">Fakt.adr:</strong> {kundAttVisa.foretag.fakturaadress}</div>}
                         
-                        // Visa olika fält beroende på prissättningstyp
-                        if (selectedProduct) {
-                          switch (selectedProduct.prissattningTyp) {
-                            case 'M2':
-                              return (
-                                <>
-                                  <div className="w-1/6 min-w-[100px]">
-                                    <FormField
-                                      control={form.control}
-                                      name={`orderrader.${index}.bredd`}
-                                      render={({ field }) => (
-                                        <FormItem>
-                                          <FormLabel>Bredd (mm)</FormLabel>
-                                          <FormControl>
-                                            <Input
-                                              type="number"
-                                              min="1"
-                                              max="10000"
-                                              step="1"
-                                              placeholder="Bredd"
-                                              {...field}
-                                              value={field.value || ''}
-                                            />
-                                          </FormControl>
-                                          <FormMessage />
-                                        </FormItem>
-                                      )}
-                                    />
-                                  </div>
-                                  <div className="w-1/6 min-w-[100px]">
-                                    <FormField
-                                      control={form.control}
-                                      name={`orderrader.${index}.hojd`}
-                                      render={({ field }) => (
-                                        <FormItem>
-                                          <FormLabel>Höjd (mm)</FormLabel>
-                                          <FormControl>
-                                            <Input
-                                              type="number"
-                                              min="1"
-                                              max="10000"
-                                              step="1"
-                                              placeholder="Höjd"
-                                              {...field}
-                                              value={field.value || ''}
-                                            />
-                                          </FormControl>
-                                          <FormMessage />
-                                        </FormItem>
-                                      )}
-                                    />
-                                  </div>
-                                </>
-                              );
-                            case 'M':
-                              return (
-                                <div className="w-1/3 min-w-[120px]">
-                                  <FormField
-                                    control={form.control}
-                                    name={`orderrader.${index}.langd`}
-                                    render={({ field }) => (
-                                      <FormItem>
-                                        <FormLabel>Längd (mm)</FormLabel>
-                                        <FormControl>
-                                          <Input
-                                            type="number"
-                                            min="1"
-                                            max="30000"
-                                            step="1"
-                                            placeholder="Längd"
-                                            {...field}
-                                            value={field.value || ''}
-                                          />
-                                        </FormControl>
-                                        <FormMessage />
-                                      </FormItem>
-                                    )}
-                                  />
-                                </div>
-                              );
-                            case 'TIM':
-                              return (
-                                <div className="w-1/3 min-w-[120px]">
-                                  <FormField
-                                    control={form.control}
-                                    name={`orderrader.${index}.tid`}
-                                    render={({ field }) => (
-                                      <FormItem>
-                                        <FormLabel>Tid (timmar)</FormLabel>
-                                        <FormControl>
-                                          <Input
-                                            type="number"
-                                            min="0.25"
-                                            max="100"
-                                            step="0.25"
-                                            placeholder="Tid"
-                                            {...field}
-                                            value={field.value || ''}
-                                          />
-                                        </FormControl>
-                                        <FormMessage />
-                                      </FormItem>
-                                    )}
-                                  />
-                                </div>
-                              );
-                            default:
-                              return null;
-                          }
+                    </div>
+                ) : (
+                    <div className="p-4 border rounded-md bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 text-sm">
+                        {!isEditing 
+                            ? "Ingen kund har valts. Gå till en kunds sida och välj 'Skapa arbetsorder'."
+                            : "Kundinformation kunde inte laddas. Kontrollera att arbetsordern har en kopplad kund."
                         }
-                        
-                        return null;
-                      })()}
+                    </div>
+                )}
+                 <FormField control={form.control} name="kundId" render={({ field }) => (
+                    <FormItem className="hidden">
+                        <FormLabel>Kund ID (dold)</FormLabel>
+                        <FormControl>
+                            <Input {...field} />
+                        </FormControl>
+                        <FormMessage />
+                    </FormItem>
+                 )}/>
+              </div>
 
-                      {/* Kommentar */}
-                      <div className="flex-1 min-w-[200px]">
-                        <FormField
-                          control={form.control}
-                          name={`orderrader.${index}.kommentar`}
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Kommentar</FormLabel>
-                              <FormControl>
-                                <Input
-                                  placeholder="Kommentar"
-                                  {...field}
-                                  value={field.value || ''}
+              <div className="lg:col-span-2 space-y-6">
+                <h3 className="text-xl font-medium flex items-center text-gray-700 dark:text-gray-300">
+                  <Settings className="h-5 w-5 mr-2" /> Orderinställningar
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 items-start">
+                  <FormField control={form.control} name="status" render={({ field }) => (<FormItem className="md:col-span-1"><FormLabel>Status *</FormLabel><Select onValueChange={field.onChange} value={field.value||ArbetsorderStatus.MATNING}><FormControl><SelectTrigger><SelectValue placeholder="Välj status"/></SelectTrigger></FormControl><SelectContent>{Object.entries(statusMap).map(([v,l])=>(<SelectItem key={v} value={v}>{l}</SelectItem>))}</SelectContent></Select><FormMessage/></FormItem>)}/>
+                  <FormField control={form.control} name="ansvarigTeknikerId" render={({ field }) => (<FormItem className="md:col-span-1"><FormLabel>Ansvarig</FormLabel><Select onValueChange={field.onChange} value={field.value||"none"}><FormControl><SelectTrigger><SelectValue placeholder="Välj tekniker"/></SelectTrigger></FormControl><SelectContent><SelectItem value="none">Ingen</SelectItem>{loadingAnstallda?<div className="p-2 text-xs"><Loader2 className="h-3 w-3 animate-spin mr-1 inline"/>Laddar...</div>:anstallda.map(a=><SelectItem key={a.id} value={a.id.toString()}>{a.fornamn} {a.efternamn}</SelectItem>)}</SelectContent></Select><FormMessage/></FormItem>)}/>
+                  
+                  <div className="p-3 border rounded-md bg-slate-50 dark:bg-slate-800/40 space-y-2 md:col-span-1 h-full">
+                    <FormField control={form.control} name="ROT" render={({ field }) => (
+                      <FormItem className="flex flex-row items-center justify-between">
+                          <div>
+                            <FormLabel className="font-medium text-sm">ROT-avdrag</FormLabel>
+                            <FormDescription className="text-xs">
+                              Gäller arbetskostnad (timpriser).
+                            </FormDescription>
+                          </div>
+                          <FormControl>
+                            <label htmlFor="rot-cb" className="flex items-center cursor-pointer">
+                              <div className="relative">
+                                <input 
+                                  id="rot-cb" 
+                                  type="checkbox" 
+                                  className="sr-only peer" 
+                                  checked={field.value} 
+                                  onChange={field.onChange}
                                 />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
+                                <div className={`block bg-gray-300 dark:bg-gray-600 peer-checked:bg-green-500 w-10 h-5 rounded-full transition-colors`}></div>
+                                <div className="dot absolute left-0.5 top-0.5 bg-white w-4 h-4 rounded-full transition peer-checked:translate-x-full"></div>
+                              </div>
+                            </label>
+                          </FormControl>
+                      </FormItem>
+                    )}/>
+                    {form.watch("ROT") && (
+                      <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700">
+                          <FormField 
+                            control={form.control} 
+                            name="ROTprocentsats" 
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel className="text-xs">ROT-procent (%) *</FormLabel>
+                                <FormControl>
+                                  <Input 
+                                    type="number" 
+                                    className="h-8 text-xs" 
+                                    min="0" max="100" 
+                                    placeholder="t.ex. 30" 
+                                    {...field} 
+                                    value={field.value || ''}
+                                  />
+                                </FormControl>
+                                {totalTimKostnadExklMoms === 0 && (
+                                    <FormDescription className="text-xs text-orange-600 dark:text-orange-400 pt-1">
+                                        OBS: Inga timkostnader finns på ordern. ROT beräknas på dessa.
+                                    </FormDescription>
+                                )}
+                                <FormMessage className="text-xs"/>
+                              </FormItem>
+                            )}
+                          />
                       </div>
-                    </div>
-
-                    <div className="flex items-end md:col-span-1">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => remove(index)}
-                        className="text-red-500 hover:text-red-700"
-                      >
-                        <Trash className="h-4 w-4" />
-                      </Button>
-                    </div>
+                    )}
                   </div>
-                ))}
-              </div>
-            )}
-
-            <div className="mt-6 space-y-2 text-right">
-              <div className="text-sm">
-                <span className="text-muted-foreground">Summa (exkl. moms):</span>{' '}
-                <span className="font-semibold">{formatCurrency(totalSumma.exklMoms)}</span>
-              </div>
-              <div className="text-lg">
-                <span className="text-muted-foreground">Summa (inkl. moms):</span>{' '}
-                <span className="font-bold">{formatCurrency(totalSumma.inklMoms)}</span>
+                </div>
+                <FormField control={form.control} name="material" render={({ field }) => (<FormItem><FormLabel>Material/Anteckningar</FormLabel><FormControl><Input placeholder="Ev. material/anteckningar" {...field} value={field.value||''}/></FormControl><FormMessage/></FormItem>)}/>
+                <FormField control={form.control} name="referensMärkning" render={({ field }) => (<FormItem><FormLabel>Referens/Märkning</FormLabel><FormControl><Input placeholder="Fakturareferens, portkod etc." {...field} value={field.value||''}/></FormControl><FormMessage/></FormItem>)}/>
               </div>
             </div>
-          </CardContent>
-        </Card>
+          </div>
 
-        <div className="flex justify-end gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => window.history.back()}
-          >
-            Avbryt
-          </Button>
-          <Button type="submit" disabled={loading}>
+          <hr className="my-10 border-gray-200 dark:border-gray-700" />
+
+          <div>
+            <h2 className="text-2xl font-semibold tracking-tight mb-6 flex items-center text-primary">
+              <Package className="h-7 w-7 mr-3" />
+              Produkter och Tjänster
+            </h2>
+            
+            <div className="border p-4 rounded-lg mb-6 space-y-4 bg-slate-50/80 dark:bg-slate-800/50 shadow-sm">
+              <h3 className="text-lg font-medium text-gray-700 dark:text-gray-300">
+                {editingOrderlineIndex !== null ? 'Redigera rad' : 'Lägg till ny rad'}
+              </h3>
+              <Form {...currentOrderradForm}>
+                {/* INGEN nästlad <form>-tagg här! */}
+                <div className="space-y-3"> {/* Omslutande div för fält och knappar för orderraden */}
+                  <div className="flex flex-wrap items-end gap-x-3 gap-y-3">
+                    <div className="flex-grow basis-full md:basis-[calc(30%-0.75rem)] min-w-[200px]"><FormField control={currentOrderradForm.control} name="prislistaId" render={({ field }) => {
+                          const [es, setES] = useState(""); const [ek, setEK] = useState<string|null>(null);
+                          return (<FormItem><FormLabel className="text-xs">Produkt/Tjänst *</FormLabel>
+                              <div className="flex flex-wrap gap-1 mb-1">
+                                <Button type="button" size="sm" variant={ek===null?"secondary":"outline"} onClick={()=>setEK(null)}>Alla</Button>
+                                {kategorier.map(k=>(<Button type="button" key={k} size="sm" variant={ek===k?"secondary":"outline"} onClick={()=>setEK(k)}>{k}</Button>))}
+                                {prisposter.some(p=>!p.kategori) && (<Button type="button" size="sm" variant={ek==='__NONE__'?"secondary":"outline"} onClick={()=>setEK('__NONE__')}>Övriga</Button>)}
+                              </div>
+                              <Select onValueChange={field.onChange} value={field.value||""}>
+                                <FormControl><SelectTrigger className="h-9"><SelectValue placeholder="Välj produkt..."/></SelectTrigger></FormControl>
+                                <SelectContent>
+                                  <div className="p-1"><Input type="text" placeholder="Sök..." value={es} onChange={e=>setES(e.target.value)} className="w-full h-8 text-xs"/></div>
+                                  {prisposter.filter(p=>(ek===null?true:ek==='__NONE__'? !p.kategori : p.kategori===ek) && (!es?true:p.namn.toLowerCase().includes(es.toLowerCase())||(p.artikelnummer&&p.artikelnummer.toLowerCase().includes(es.toLowerCase())))).length===0 
+                                    ?<div className="p-2 text-xs text-center text-gray-500">Inga produkter</div>
+                                    :prisposter.filter(p=>(ek===null?true:ek==='__NONE__'? !p.kategori : p.kategori===ek) && (!es?true:p.namn.toLowerCase().includes(es.toLowerCase())||(p.artikelnummer&&p.artikelnummer.toLowerCase().includes(es.toLowerCase())))).map(p=>(
+                                      <SelectItem key={p.id} value={p.id.toString()}><div className="flex justify-between w-full text-xs"><span>{p.namn}{p.artikelnummer&&<span className="text-xs ml-1 text-gray-400">({p.artikelnummer})</span>}</span><span className="text-gray-500">{formatCurrencyNoDecimals(p.prisInklMoms)}</span></div></SelectItem>))}
+                                </SelectContent></Select><FormMessage className="text-xs"/></FormItem>);}}/>
+                    </div>
+                    <div className="min-w-[60px] flex-grow basis-[calc(8%-0.75rem)]"><FormField control={currentOrderradForm.control} name="antal" render={({ field }) => (<FormItem><FormLabel className="text-xs">Antal</FormLabel><FormControl><Input className="h-9 text-xs" type="number" min="1" step="1" {...field} value={field.value||'1'}/></FormControl><FormMessage className="text-xs"/></FormItem>)}/></div>
+                    <div className="min-w-[70px] flex-grow basis-[calc(8%-0.75rem)]"><FormField control={currentOrderradForm.control} name="rabattProcent" render={({ field }) => (<FormItem><FormLabel className="text-xs">Rabatt (%)</FormLabel><FormControl><Input className="h-9 text-xs" type="number" min="0" max="100" step="1" {...field} value={field.value||'0'}/></FormControl><FormMessage className="text-xs"/></FormItem>)}/></div>
+                    
+                    {selectedProductForEditor && (()=>{ 
+                        const fieldBasis = "basis-[calc(10%-0.75rem)]";
+                        switch(selectedProductForEditor.prissattningTyp){
+                            case 'M2': return (<><div className={`min-w-[80px] flex-grow ${fieldBasis}`}><FormField control={currentOrderradForm.control} name="bredd" render={({ field }) => (<FormItem><FormLabel className="text-xs">Bredd (mm)</FormLabel><FormControl><Input className="h-9 text-xs" type="number" min="1" {...field} value={field.value||''}/></FormControl><FormMessage className="text-xs"/></FormItem>)}/></div><div className={`min-w-[80px] flex-grow ${fieldBasis}`}><FormField control={currentOrderradForm.control} name="hojd" render={({ field }) => (<FormItem><FormLabel className="text-xs">Höjd (mm)</FormLabel><FormControl><Input className="h-9 text-xs" type="number" min="1" {...field} value={field.value||''}/></FormControl><FormMessage className="text-xs"/></FormItem>)}/></div></>);
+                            case 'M': return (<div className={`min-w-[100px] flex-grow ${fieldBasis}`}><FormField control={currentOrderradForm.control} name="langd" render={({ field }) => (<FormItem><FormLabel className="text-xs">Längd (mm)</FormLabel><FormControl><Input className="h-9 text-xs" type="number" min="1" {...field} value={field.value||''}/></FormControl><FormMessage className="text-xs"/></FormItem>)}/></div>);
+                            case 'TIM': return (<div className={`min-w-[100px] flex-grow ${fieldBasis}`}><FormField control={currentOrderradForm.control} name="tid" render={({ field }) => (<FormItem><FormLabel className="text-xs">Tid (tim)</FormLabel><FormControl><Input className="h-9 text-xs" type="number" min="0.25" step="0.25" {...field} value={field.value||''}/></FormControl><FormMessage className="text-xs"/></FormItem>)}/></div>);
+                            default: return null;
+                        }
+                    })()}
+                    <div className="flex-grow basis-full sm:basis-[calc(15%-0.75rem)] min-w-[150px]"><FormField control={currentOrderradForm.control} name="kommentar" render={({ field }) => (<FormItem><FormLabel className="text-xs">Kommentar</FormLabel><FormControl><Input className="h-9 text-xs" placeholder="Frivillig kommentar..." {...field} value={field.value||''}/></FormControl><FormMessage className="text-xs"/></FormItem>)}/></div>
+                    <div className="flex gap-2 flex-shrink-0"> 
+                        <Button type="button" size="sm" onClick={currentOrderradForm.handleSubmit(handleAddOrUpdateOrderrad)}>{editingOrderlineIndex!==null?<><Save className="h-4 w-4 mr-1.5"/>Uppdatera</>:<><CirclePlus className="h-4 w-4 mr-1.5"/>Lägg till</>}</Button>
+                        {editingOrderlineIndex!==null && (<Button type="button" size="sm" variant="outline" onClick={handleCancelEdit}>Avbryt</Button>)}
+                    </div>
+                  </div>
+                </div>
+              </Form>
+            </div>
+
+            {fields.length === 0 
+              ? <div className="text-center py-8 text-sm text-muted-foreground"><p>Inga orderrader tillagda.</p></div>
+              : <div className="space-y-2">
+                  <h4 className="text-md font-medium mb-2 text-gray-600 dark:text-gray-400">Tillagda rader:</h4>
+                  {fields.map((fieldData, index) => {
+                    const orderrad = form.getValues().orderrader[index]; 
+                    const prispost = prisposter.find(p => p.id.toString() === orderrad.prislistaId);
+                    const rowPriceExclMoms = calculateRowPriceExclMoms(orderrad);
+                    
+                    let radDetaljer = `Antal: ${orderrad.antal||'1'}`; 
+                    if(orderrad.rabattProcent && parseFloat(orderrad.rabattProcent) !== 0) radDetaljer += `, Rabatt: ${orderrad.rabattProcent}%`;
+                    if(prispost){
+                      switch(prispost.prissattningTyp){
+                        case 'M2': radDetaljer += `, Mått: ${orderrad.bredd||'?'}x${orderrad.hojd||'?'}mm`; break;
+                        case 'M': radDetaljer += `, Längd: ${orderrad.langd||'?'}mm`; break;
+                        case 'TIM': radDetaljer += `, Tid: ${orderrad.tid||'?'} tim`; break;
+                      }
+                    }
+                    if (orderrad.kommentar) radDetaljer += ` | Kom: ${orderrad.kommentar.length > 25 ? orderrad.kommentar.substring(0, 22) + "..." : orderrad.kommentar}`;
+
+                    return (<Card 
+                                key={fieldData.id} 
+                                className={`p-2.5 transition-colors shadow-sm cursor-pointer ${editingOrderlineIndex===index?'ring-2 ring-primary bg-primary/10':'hover:bg-slate-100 dark:hover:bg-slate-800/50'}`}
+                                onClick={()=>handleEditOrderrad(index)}
+                            >
+                        <div className="flex justify-between items-center gap-3">
+                          <div className="flex-grow overflow-hidden"> 
+                            <div className="flex items-baseline gap-2">
+                                <p className="font-semibold text-sm truncate shrink-0"> 
+                                {prispost?prispost.namn:'Okänd produkt'}
+                                {prispost?.artikelnummer&&<span className="text-xs text-muted-foreground ml-1">({prispost.artikelnummer})</span>}
+                                </p>
+                                <p className="text-xs text-muted-foreground truncate whitespace-nowrap">{radDetaljer}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center flex-shrink-0 gap-2">
+                            <span className="text-sm font-medium text-gray-700 dark:text-gray-300 whitespace-nowrap">
+                              {formatCurrency(rowPriceExclMoms)}
+                            </span>
+                            <Button 
+                                type="button" 
+                                variant="ghost" 
+                                size="icon" 
+                                onClick={(e)=>{e.stopPropagation();handleRemoveOrderrad(index);}} 
+                                className="text-red-500 hover:text-red-600 h-7 w-7"
+                                aria-label="Ta bort rad"
+                            >
+                                <Trash className="h-4 w-4"/>
+                            </Button>
+                          </div>
+                        </div>
+                        </Card>);
+                    })}
+                </div>}
+
+            <div className="mt-8 pt-6 border-t border-gray-200 dark:border-gray-700 space-y-2 text-right">
+              <div className="text-md"><span className="text-muted-foreground">Summa (exkl. moms):</span> <span className="font-semibold">{formatCurrency(totalSumma.exklMoms)}</span></div>
+              <div className="text-xl"><span className="text-muted-foreground">Summa (inkl. moms):</span> <span className="font-bold text-primary">{formatCurrency(totalSumma.inklMoms)}</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-3 pt-4">
+          <Button type="button" variant="outline" onClick={() => router.back()}>Avbryt</Button>
+          <Button type="submit" disabled={loading || !kundAttVisa} className="min-w-[160px]">
             {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
-            {isEditing ? 'Spara ändringar' : 'Skapa arbetsorder'}
+            {isEditing ? 'Spara ändringar' : 'Skapa Arbetsorder'}
           </Button>
         </div>
       </form>

@@ -1,8 +1,13 @@
+// File: app/api/arbetsordrar/[id]/route.ts
+// Fullständigt innehåll med modifierad PUT och befintlig GET/DELETE
+
 import { prisma } from '@/lib/prisma';
-import { ArbetsorderStatus, PrissattningTyp } from '@prisma/client';
+import { ArbetsorderStatus, PrissattningTyp, Prisma } from '@prisma/client'; // Importera Prisma
 import { getServerSession } from 'next-auth';
 import { NextRequest, NextResponse } from 'next/server';
 import { authOptions } from '@/app/api/auth/[...nextauth]/route';
+import fs from 'fs'; // För att kunna ta bort bilder från filsystemet
+import path from 'path'; // För att hantera filsökvägar
 
 type RouteParams = {
   params: {
@@ -22,7 +27,8 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    const id = parseInt(await params.id);
+    const idString = params.id; 
+    const id = parseInt(idString); 
     
     if (isNaN(id)) {
       return NextResponse.json(
@@ -70,9 +76,10 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
             efternamn: true,
           },
         },
-        kalender: {
+        kalender: { // Inkludera kalenderhändelser kopplade till arbetsordern
           include: {
             ansvarig: true,
+            medarbetare: { include: { anvandare: true }}
           },
         },
       },
@@ -85,18 +92,21 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Förhandsbearbeta orderrader för att säkerställa att prisliste-data är historiskt korrekt
+    // Bearbeta orderrader för att använda enhetspris om det finns
     const processedArbetsorder = {
       ...arbetsorder,
       orderrader: arbetsorder.orderrader.map(rad => {
-        // Skapa en isolerad kopia av prislista med data från orderraden om det finns
+        // Om enhetspris finns sparat på orderraden, använd det istället för aktuellt prislistepris
         if (rad.enhetsPrisExklMoms !== null && rad.enhetsPrisExklMoms !== undefined) {
           return {
             ...rad,
-            prislista: {
+            prislista: { // Skriv över prislistans priser med de sparade enhetspriserna
               ...rad.prislista,
               prisExklMoms: rad.enhetsPrisExklMoms,
-              momssats: rad.enhetsMomssats || rad.prislista.momssats
+              momssats: rad.enhetsMomssats ?? rad.prislista.momssats, // Använd sparat om det finns
+              // prisInklMoms kan behöva räknas om här om det ska reflektera enhetspris + enhetsmoms
+              // För enkelhetens skull, låt klienten räkna om prisInklMoms om det är kritiskt att det matchar enhetspris.
+              // Alternativt, spara enhetsPrisInklMoms också på orderraden.
             }
           };
         }
@@ -120,366 +130,162 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
   try {
     const session = await getServerSession(authOptions);
     
-    if (!session?.user) {
-      return NextResponse.json(
-        { error: 'Inte autentiserad' },
-        { status: 401 }
-      );
+    if (!session?.user || !session.user.id) { 
+      return NextResponse.json({ error: 'Inte autentiserad' }, { status: 401 });
     }
 
-    const userId = parseInt(session.user.id as string);
-    const id = parseInt(await params.id);
+    const userId = parseInt(session.user.id as string); 
+    const arbetsorderIdToUpdate = parseInt(params.id);
     
-    if (isNaN(id)) {
-      return NextResponse.json(
-        { error: 'Ogiltigt arbetsorder-ID' },
-        { status: 400 }
-      );
+    if (isNaN(arbetsorderIdToUpdate)) {
+      return NextResponse.json({ error: 'Ogiltigt arbetsorder-ID' }, { status: 400 });
     }
 
     const body = await req.json();
-    const { 
-      kundId, 
-      ROT, 
-      ROTprocentsats,
-      arbetstid,
-      material,
-      referensMärkning,
-      ansvarigTeknikerId,
-      status,
-      orderrader = [],
-    } = body;
-
-    // Kontrollera att arbetsordern finns
+    
     const befintligArbetsorder = await prisma.arbetsorder.findUnique({
-      where: { id },
-      include: {
-        orderrader: true,
-      },
+      where: { id: arbetsorderIdToUpdate },
+      include: { orderrader: true }, 
     });
 
     if (!befintligArbetsorder) {
-      return NextResponse.json(
-        { error: 'Arbetsordern hittades inte' },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: 'Arbetsordern hittades inte' }, { status: 404 });
     }
 
-    // Validera existens av kund om kundId har ändrats
-    if (kundId && kundId !== befintligArbetsorder.kundId) {
-      const kundIdInt = typeof kundId === 'string' ? parseInt(kundId) : kundId;
-      
-      // Validera att vi har ett giltigt ID
-      if (!kundIdInt || isNaN(kundIdInt)) {
-        return NextResponse.json(
-          { error: 'Ogiltigt kund-ID' },
-          { status: 400 }
-        );
-      }
-      
-      const kund = await prisma.kund.findUnique({
-        where: { id: kundIdInt }
-      });
-
-      if (!kund) {
-        return NextResponse.json(
-          { error: 'Kunden hittades inte' },
-          { status: 400 }
-        );
-      }
-    }
-
-    // Validera tekniker om ändrad
-    if (ansvarigTeknikerId && ansvarigTeknikerId !== befintligArbetsorder.ansvarigTeknikerId) {
-      // Konvertera ansvarigTeknikerId till nummer om det är en sträng
-      const teknikerId = typeof ansvarigTeknikerId === 'string' ? parseInt(ansvarigTeknikerId) : ansvarigTeknikerId;
-      
-      const tekniker = await prisma.anvandare.findUnique({
-        where: { id: teknikerId }
-      });
-
-      if (!tekniker) {
-        return NextResponse.json(
-          { error: 'Tekniker hittades inte' },
-          { status: 400 }
-        );
-      }
-    }
-
-    // Hantera orderrader och beräkna totalsummor
-    let totalPrisExklMoms = 0;
-    let totalPrisInklMoms = 0;
-
-    // Förbered uppdaterade och nya orderrader
-    type OrderRadUpdate = {
-      where: { id: number };
-      data: {
-        prislistaId: number;
-        antal: number;
-        bredd?: number | null;
-        hojd?: number | null;
-        langd?: number | null;
-        tid?: number | null;
-        rabattProcent: number;
-        enhetsPrisExklMoms: number;
-        enhetsMomssats: number;
-        enhetsPrissattningTyp: PrissattningTyp;
-        radPrisExklMoms: number;
-        radPrisInklMoms: number;
-        kommentar?: string;
-      };
+    const updateData: Prisma.ArbetsorderUpdateInput = {
+        uppdateradAv: { connect: { id: userId } } 
     };
 
-    type NyOrderRad = {
-      prislistaId: number;
-      antal: number;
-      bredd?: number | null;
-      hojd?: number | null;
-      langd?: number | null;
-      tid?: number | null;
-      rabattProcent: number;
-      enhetsPrisExklMoms: number;
-      enhetsMomssats: number;
-      enhetsPrissattningTyp: PrissattningTyp;
-      radPrisExklMoms: number;
-      radPrisInklMoms: number;
-      kommentar?: string;
-    };
-
-    const uppdateradeOrderRader: OrderRadUpdate[] = [];
-    const nyaOrderRader: NyOrderRad[] = [];
-    const befintligaOrderRaderIds = new Set<number>();
-
-    for (const rad of orderrader) {
-      const { id: radId, prislistaId, antal, rabattProcent, kommentar } = rad;
-      
-      // Validera att prisposten finns och konvertera ID till integer
-      const prislistaIdInt = typeof prislistaId === 'string' ? parseInt(prislistaId) : prislistaId;
-      
-      if (isNaN(prislistaIdInt)) {
-        return NextResponse.json(
-          { error: `Ogiltigt prislistaId: ${prislistaId}` },
-          { status: 400 }
-        );
-      }
-      
-      const prispost = await prisma.prislista.findUnique({
-        where: { id: prislistaIdInt }
-      });
-
-      if (!prispost) {
-        return NextResponse.json(
-          { error: `Prispost med ID ${prislistaId} hittades inte` },
-          { status: 400 }
-        );
-      }
-
-      // Extrahera mått och tid från fälten i rad
-      const bredd = rad.bredd ? parseFloat(String(rad.bredd)) : null;
-      const hojd = rad.hojd ? parseFloat(String(rad.hojd)) : null;
-      const langd = rad.langd ? parseFloat(String(rad.langd)) : null;
-      const tid = rad.tid ? parseFloat(String(rad.tid)) : null;
-      
-      // Beräkna faktorn baserat på prissättningstyp
-      console.log(`Processing orderrad with prissattningTyp: ${prispost.prissattningTyp}`);
-      
-      let mangd = 1;
-      if (prispost.prissattningTyp === 'M2' && bredd && hojd) {
-        // Konvertera millimeter till meter för bredd och höjd
-        const breddMm = bredd;
-        const hojdMm = hojd;
-        
-        // Konvertera alltid till meter (antar att värden anges i millimeter)
-        const breddM = breddMm / 1000;
-        const hojdM = hojdMm / 1000;
-        
-        mangd = breddM * hojdM;
-        console.log(`M2 calculation: ${breddMm}mm × ${hojdMm}mm = ${breddM}m × ${hojdM}m = ${mangd}m²`);
-      } else if (prispost.prissattningTyp === 'M' && langd) {
-        // Konvertera millimeter till meter för längd
-        const langdMm = langd;
-        const langdM = langdMm / 1000;
-        
-        mangd = langdM;
-        console.log(`M calculation: ${langdMm}mm = ${langdM}m`);
-      } else if (prispost.prissattningTyp === 'TIM' && tid) {
-        // Timpris
-        mangd = tid;
-        console.log(`TIM calculation: ${mangd} timmar`);
-      } else {
-        // Styckpris (ST) - använder bara antal
-        console.log(`ST calculation: standard styckpris (mangd = 1)`);
-      }
-      
-      // Beräkna radpriser med mangd-faktor
-      const radPrisExklMoms = prispost.prisExklMoms * mangd * antal * (1 - (rabattProcent || 0) / 100);
-      const radPrisInklMoms = prispost.prisInklMoms * mangd * antal * (1 - (rabattProcent || 0) / 100);
-      
-      console.log(`Price calculation (update): 
-        Base price: ${prispost.prisExklMoms} kr
-        Quantity factor: ${mangd}
-        Units: ${antal}
-        Discount: ${rabattProcent || 0}%
-        Final row price: ${radPrisExklMoms} kr
-      `);
-      
-      // Lägg till i totalsumman
-      totalPrisExklMoms += radPrisExklMoms;
-      totalPrisInklMoms += radPrisInklMoms;
-
-      // Avgör om det är en uppdatering eller en ny rad
-      if (radId) {
-        befintligaOrderRaderIds.add(radId);
-        uppdateradeOrderRader.push({
-          where: { id: radId },
-          data: {
-            prislistaId: prislistaIdInt, // Use the converted integer value
-            antal,
-            bredd,
-            hojd,
-            langd,
-            tid,
-            rabattProcent: rabattProcent || 0,
-            enhetsPrisExklMoms: prispost.prisExklMoms,
-            enhetsMomssats: prispost.momssats,
-            enhetsPrissattningTyp: prispost.prissattningTyp,
-            radPrisExklMoms,
-            radPrisInklMoms,
-            kommentar,
-          },
-        });
-      } else {
-        nyaOrderRader.push({
-          prislistaId: prislistaIdInt, // Use the converted integer value
-          antal,
-          bredd,
-          hojd,
-          langd,
-          tid,
-          rabattProcent: rabattProcent || 0,
-          enhetsPrisExklMoms: prispost.prisExklMoms,
-          enhetsMomssats: prispost.momssats,
-          enhetsPrissattningTyp: prispost.prissattningTyp,
-          radPrisExklMoms,
-          radPrisInklMoms,
-          kommentar,
-        });
-      }
+    if (body.kundId !== undefined) {
+      const kundIdInt = parseInt(body.kundId);
+      if (isNaN(kundIdInt)) return NextResponse.json({ error: 'Ogiltigt kund-ID format' }, { status: 400 });
+      const kund = await prisma.kund.findUnique({ where: { id: kundIdInt }});
+      if (!kund) return NextResponse.json({ error: 'Kunden hittades inte' }, { status: 400 });
+      updateData.kund = { connect: { id: kundIdInt } };
     }
 
-    // Identifiera orderrader som ska tas bort
-    const raderAttTaBort = befintligArbetsorder.orderrader
-      .filter(rad => !befintligaOrderRaderIds.has(rad.id))
-      .map(rad => rad.id);
-
-    // Uppdatera arbetsordern i en transaktion
-    const uppdateradArbetsorder = await prisma.$transaction(async (tx) => {
-      // Ta bort orderrader som inte längre behövs
-      if (raderAttTaBort.length > 0) {
-        await tx.orderrad.deleteMany({
-          where: {
-            id: {
-              in: raderAttTaBort,
-            },
-          },
-        });
-      }
-
-      // Uppdatera befintliga orderrader
-      for (const updateOp of uppdateradeOrderRader) {
-        const { where, data } = updateOp;
-        await tx.orderrad.update({
-          where,
-          data
-        });
-      }
-
-      // Lägg till nya orderrader
-      if (nyaOrderRader.length > 0) {
-        // Skapa orderrader en efter en för att undvika typningsproblem
-        for (const rad of nyaOrderRader) {
-          await tx.orderrad.create({
-            data: {
-              arbetsorderId: id,
-              prislistaId: rad.prislistaId,
-              antal: rad.antal,
-              bredd: rad.bredd,
-              hojd: rad.hojd,
-              langd: rad.langd,
-              tid: rad.tid,
-              rabattProcent: rad.rabattProcent,
-              enhetsPrisExklMoms: rad.enhetsPrisExklMoms,
-              enhetsMomssats: rad.enhetsMomssats,
-              enhetsPrissattningTyp: rad.enhetsPrissattningTyp,
-              radPrisExklMoms: rad.radPrisExklMoms,
-              radPrisInklMoms: rad.radPrisInklMoms,
-              kommentar: rad.kommentar,
-            }
-          });
+    if (body.ROT !== undefined) updateData.ROT = body.ROT;
+    if (body.ROTprocentsats !== undefined) {
+        updateData.ROTprocentsats = (body.ROT && body.ROTprocentsats !== null && body.ROTprocentsats !== "") 
+                                    ? parseFloat(body.ROTprocentsats) 
+                                    : null;
+    }
+    if (body.material !== undefined) updateData.material = body.material;
+    if (body.referensMärkning !== undefined) updateData.referensMärkning = body.referensMärkning;
+    if (body.status !== undefined) updateData.status = body.status as ArbetsorderStatus;
+    
+    if (body.ansvarigTeknikerId !== undefined) {
+        if (body.ansvarigTeknikerId === null || body.ansvarigTeknikerId === "none" || body.ansvarigTeknikerId === "") {
+            updateData.ansvarigTekniker = { disconnect: true }; 
+        } else {
+            const parsedTeknikerId = parseInt(body.ansvarigTeknikerId);
+            if (isNaN(parsedTeknikerId)) return NextResponse.json({ error: 'Ogiltigt tekniker-ID format' }, { status: 400 });
+            const tekniker = await prisma.anvandare.findUnique({ where: { id: parsedTeknikerId } });
+            if (!tekniker) return NextResponse.json({ error: `Tekniker med ID ${parsedTeknikerId} hittades inte` }, { status: 400 });
+            updateData.ansvarigTekniker = { connect: { id: parsedTeknikerId } };
         }
-      }
+    }
 
-      // Uppdatera arbetsordern
-      // Konvertera ansvarigTeknikerId till nummer om det är en sträng
-      const teknikerId = ansvarigTeknikerId ? 
-        (typeof ansvarigTeknikerId === 'string' ? parseInt(ansvarigTeknikerId) : ansvarigTeknikerId) 
-        : befintligArbetsorder.ansvarigTeknikerId;
+    if (body.orderrader && Array.isArray(body.orderrader)) {
+        let totalPrisExklMoms = 0;
+        let totalPrisInklMoms = 0;
         
-      return await tx.arbetsorder.update({
-        where: { id },
-        data: {
-          kundId: kundId ? (typeof kundId === 'string' ? parseInt(kundId) : kundId) : befintligArbetsorder.kundId,
-          ROT,
-          ROTprocentsats: ROT ? ROTprocentsats : null,
-          arbetstid,
-          material,
-          referensMärkning,
-          ansvarigTeknikerId: teknikerId,
-          status: status || befintligArbetsorder.status,
-          uppdateradAvId: userId,
-          totalPrisExklMoms,
-          totalPrisInklMoms,
-        },
-        include: {
-          kund: {
-            include: {
-              privatperson: true,
-              foretag: true,
-            },
-          },
+        const createOperations: Prisma.OrderradCreateWithoutArbetsorderInput[] = [];
+        const updateOperations: Prisma.OrderradUpdateWithWhereUniqueWithoutArbetsorderInput[] = [];
+        
+        const befintligaRadIdnClient = new Set(body.orderrader.map((r: any) => r.id).filter(Boolean));
+        const raderAttTaBortDb = befintligArbetsorder.orderrader
+            .filter(dbRad => !befintligaRadIdnClient.has(dbRad.id))
+            .map(dbRad => ({ id: dbRad.id }));
+
+        for (const rad of body.orderrader) {
+            const antalNum = parseInt(rad.antal);
+            const rabattProcentNum = parseFloat(rad.rabattProcent || "0");
+            const breddNum = rad.bredd ? parseFloat(rad.bredd) : null;
+            const hojdNum = rad.hojd ? parseFloat(rad.hojd) : null;
+            const langdNum = rad.langd ? parseFloat(rad.langd) : null;
+            const tidNum = rad.tid ? parseFloat(rad.tid) : null;
+
+            if (isNaN(antalNum) || antalNum <= 0) { 
+                console.warn(`Ogiltigt antal för orderrad, hoppar över: ${JSON.stringify(rad)}`);
+                continue; 
+            }
+
+            const prislistaIdInt = parseInt(rad.prislistaId);
+            if (isNaN(prislistaIdInt)) {
+                console.warn(`Ogiltigt prislistaId, hoppar över: ${JSON.stringify(rad)}`);
+                continue;
+            }
+            
+            const prispost = await prisma.prislista.findUnique({ where: { id: prislistaIdInt }});
+            if (!prispost) {
+                console.warn(`Prispost med ID ${prislistaIdInt} hittades inte, hoppar över rad.`);
+                continue;
+            }
+
+            let mangd = 1;
+            if (prispost.prissattningTyp === PrissattningTyp.M2 && breddNum && hojdNum) mangd = (breddNum / 1000) * (hojdNum / 1000);
+            else if (prispost.prissattningTyp === PrissattningTyp.M && langdNum) mangd = langdNum / 1000;
+            else if (prispost.prissattningTyp === PrissattningTyp.TIM && tidNum) mangd = tidNum;
+            
+            const radExklMoms = prispost.prisExklMoms * mangd * antalNum * (1 - rabattProcentNum / 100);
+            const radInklMoms = prispost.prisInklMoms * mangd * antalNum * (1 - rabattProcentNum / 100);
+            
+            totalPrisExklMoms += radExklMoms;
+            totalPrisInklMoms += radInklMoms;
+
+            const orderradDataForDb = {
+                prislista: { connect: { id: prislistaIdInt } }, // Korrekt sätt att koppla
+                antal: antalNum, bredd: breddNum, hojd: hojdNum, langd: langdNum, tid: tidNum,
+                rabattProcent: rabattProcentNum, enhetsPrisExklMoms: prispost.prisExklMoms, enhetsMomssats: prispost.momssats,
+                enhetsPrissattningTyp: prispost.prissattningTyp, radPrisExklMoms: radExklMoms, radPrisInklMoms: radInklMoms,
+                kommentar: rad.kommentar || null,
+            };
+
+            if (rad.id) { 
+                updateOperations.push({
+                    where: { id: rad.id },
+                    data: orderradDataForDb,
+                });
+            } else { 
+                createOperations.push(orderradDataForDb);
+            }
+        }
+        
+        updateData.orderrader = {
+            ...(createOperations.length > 0 && { create: createOperations }),
+            ...(updateOperations.length > 0 && { update: updateOperations }),
+            ...(raderAttTaBortDb.length > 0 && { deleteMany: raderAttTaBortDb }),
+        };
+        updateData.totalPrisExklMoms = totalPrisExklMoms;
+        updateData.totalPrisInklMoms = totalPrisInklMoms;
+    }
+
+
+    const uppdateradArbetsorder = await prisma.arbetsorder.update({
+        where: { id: arbetsorderIdToUpdate },
+        data: updateData,
+        include: { 
+          kund: { include: { privatperson: true, foretag: true }},
           ansvarigTekniker: true,
-          orderrader: {
-            include: {
-              prislista: true,
-            },
-          },
+          orderrader: { include: { prislista: true }},
           bilder: true,
-          skapadAv: {
-            select: {
-              id: true,
-              fornamn: true,
-              efternamn: true,
-            },
-          },
-          uppdateradAv: {
-            select: {
-              id: true,
-              fornamn: true,
-              efternamn: true,
-            },
-          },
+          skapadAv: { select: { id: true, fornamn: true, efternamn: true }},
+          uppdateradAv: { select: { id: true, fornamn: true, efternamn: true }},
         },
-      });
     });
 
     return NextResponse.json(uppdateradArbetsorder);
 
   } catch (error) {
     console.error('Fel vid uppdatering av arbetsorder:', error);
-    return NextResponse.json(
-      { error: 'Ett fel uppstod vid uppdatering av arbetsorder' },
-      { status: 500 }
-    );
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      return NextResponse.json({ error: 'Databasfel vid uppdatering.', details: error.message, code: error.code }, { status: 400 });
+    }
+    if (error instanceof Error && error.name === 'PrismaClientValidationError') { // Korrekt namn för felet
+        return NextResponse.json( { error: 'Valideringsfel från Prisma vid uppdatering.', details: error.message }, { status: 400 });
+    }
+    return NextResponse.json( { error: 'Ett serverfel uppstod vid uppdatering av arbetsorder', details: (error as Error).message }, { status: 500 });
   }
 }
 
@@ -489,88 +295,72 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
     const session = await getServerSession(authOptions);
     
     if (!session?.user) {
-      return NextResponse.json(
-        { error: 'Inte autentiserad' },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: 'Inte autentiserad' }, { status: 401 });
     }
 
-    const id = parseInt(await params.id);
+    const idString = params.id;
+    const id = parseInt(idString);
     
     if (isNaN(id)) {
-      return NextResponse.json(
-        { error: 'Ogiltigt arbetsorder-ID' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Ogiltigt arbetsorder-ID' }, { status: 400 });
     }
 
-    // Kontrollera att arbetsordern finns
     const arbetsorder = await prisma.arbetsorder.findUnique({
       where: { id },
-      include: {
-        kalender: true,
-        bilder: true,
-      },
+      include: { kalender: true, bilder: true, orderrader: true }, // Inkludera orderrader
     });
 
     if (!arbetsorder) {
-      return NextResponse.json(
-        { error: 'Arbetsordern hittades inte' },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: 'Arbetsordern hittades inte' }, { status: 404 });
     }
 
-    // Kontrollera om arbetsordern är i ett status som tillåter borttagning
+    // Undvik att ta bort om fakturerad (kan vara en policy)
     if (arbetsorder.status === ArbetsorderStatus.FAKTURERAD) {
-      return NextResponse.json(
-        { error: 'Kan inte ta bort en fakturerad arbetsorder' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Kan inte ta bort en fakturerad arbetsorder' }, { status: 400 });
     }
 
-    // Ta bort arbetsorder och relaterade data i en transaktion
+    // Transaktion för att säkerställa atomicitet
     await prisma.$transaction(async (tx) => {
-      // Ta bort kalenderhändelser
+      // 1. Ta bort kopplade kalenderhändelser
       if (arbetsorder.kalender.length > 0) {
-        await tx.kalender.deleteMany({
-          where: {
-            arbetsorderId: id,
-          },
-        });
+        await tx.kalender.deleteMany({ where: { arbetsorderId: id }});
       }
 
-      // Ta bort bilder (skulle i en riktig app också ta bort fysiska filer)
+      // 2. Ta bort kopplade bilder (både från DB och filsystem)
       if (arbetsorder.bilder.length > 0) {
-        await tx.bild.deleteMany({
-          where: {
-            arbetsorderId: id,
-          },
-        });
+        for (const bild of arbetsorder.bilder) {
+            try {
+                const filePath = path.join(process.cwd(), 'public', bild.filsokvag.replace(/^\//, ''));
+                if (fs.existsSync(filePath)) {
+                    fs.unlinkSync(filePath);
+                }
+            } catch (fileError) {
+                console.error(`Kunde inte ta bort fil ${bild.filsokvag}:`, fileError);
+                // Fortsätt även om filborttagning misslyckas, men logga felet.
+            }
+        }
+        await tx.bild.deleteMany({ where: { arbetsorderId: id }});
       }
 
-      // Ta bort orderrader
-      await tx.orderrad.deleteMany({
-        where: {
-          arbetsorderId: id,
-        },
-      });
-
-      // Ta bort arbetsordern
-      await tx.arbetsorder.delete({
-        where: { id },
-      });
+      // 3. Ta bort kopplade orderrader
+      if (arbetsorder.orderrader.length > 0) {
+        await tx.orderrad.deleteMany({ where: { arbetsorderId: id }});
+      }
+      
+      // 4. Ta bort själva arbetsordern
+      await tx.arbetsorder.delete({ where: { id }});
     });
 
-    return NextResponse.json(
-      { message: 'Arbetsordern har tagits bort' },
-      { status: 200 }
-    );
+    return NextResponse.json({ message: 'Arbetsordern har tagits bort' }, { status: 200 });
 
   } catch (error) {
     console.error('Fel vid borttagning av arbetsorder:', error);
-    return NextResponse.json(
-      { error: 'Ett fel uppstod vid borttagning av arbetsorder' },
-      { status: 500 }
-    );
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+        // Specifikt för foreign key constraints om något blockerar
+        if (error.code === 'P2003') {
+             return NextResponse.json({ error: 'Kunde inte ta bort arbetsordern på grund av kvarvarande beroenden i databasen.'}, { status: 409 });
+        }
+    }
+    return NextResponse.json({ error: 'Ett fel uppstod vid borttagning av arbetsorder', details: (error as Error).message }, { status: 500 });
   }
 }

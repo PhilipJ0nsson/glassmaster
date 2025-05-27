@@ -1,12 +1,17 @@
+// File: app/(skyddade-sidor)/arbetsordrar/page.tsx
+// Mode: Modifying
+// Change: Added 'MATNING' to the initial state of 'statusStats'.
+// Reasoning: To align the state with the updated 'ArbetsorderStatus' enum and resolve TypeScript error.
+// --- start diff ---
+// /app/(skyddade-sidor)/arbetsordrar/page.tsx
 'use client';
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card"; // Importera CardContent
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ArbetsorderStatus } from "@prisma/client";
-import { PlusCircle, Search } from "lucide-react";
-import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { Search } from "lucide-react"; 
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import ArbetsorderLista from "./komponenter/arbetsorder-lista";
@@ -18,7 +23,7 @@ export interface ArbetsorderData {
   ROTprocentsats: number | null;
   arbetstid: number | null;
   material: string | null;
-  referensMärkning: string | null; // <-- Lade till denna rad
+  referensMärkning: string | null;
   ansvarigTeknikerId: number | null;
   status: ArbetsorderStatus;
   skapadAvId: number;
@@ -43,25 +48,11 @@ export interface ArbetsorderData {
     fornamn: string;
     efternamn: string;
   } | null;
-  orderrader: Array<{
+  orderrader: Array<{ 
     id: number;
-    antal: number;
-    rabattProcent: number;
-    radPrisExklMoms: number;
-    radPrisInklMoms: number;
-    kommentar: string | null;
-    prislista: {
-      id: number;
-      namn: string;
-      prisExklMoms: number;
-      momssats: number;
-      prisInklMoms: number;
-    };
-  }>;
-  bilder: Array<{
+  }>; 
+  bilder: Array<{ 
     id: number;
-    filnamn: string;
-    filsokvag: string;
   }>;
   skapadAv: {
     id: number;
@@ -78,6 +69,7 @@ interface PaginationData {
 }
 
 export default function ArbetsordrarPage() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const kundIdParam = searchParams.get('kundId');
   
@@ -94,12 +86,51 @@ export default function ArbetsordrarPage() {
   const [teknikerFilter, setTeknikerFilter] = useState<string>("");
   const [kundFilter, setKundFilter] = useState<string>(kundIdParam || "");
   const [anstallda, setAnstallda] = useState<any[]>([]);
-  const [statusStats, setStatusStats] = useState<Record<ArbetsorderStatus, number>>({} as any);
+  const [statusStats, setStatusStats] = useState<Record<ArbetsorderStatus, number | undefined>>({
+    MATNING: undefined, // Lade till MATNING här
+    OFFERT: undefined, 
+    AKTIV: undefined, 
+    SLUTFORD: undefined, 
+    FAKTURERAD: undefined, 
+    AVBRUTEN: undefined 
+  });
   const [kundInfo, setKundInfo] = useState<{id: number, namn: string} | null>(null);
 
   useEffect(() => {
     fetchAnstallda();
   }, []);
+
+  const fetchArbetsordrar = async () => {
+    try {
+      setLoading(true);
+      let url = `/api/arbetsordrar?page=${pagination.page}&pageSize=${pagination.pageSize}`;
+      if (search) url += `&search=${encodeURIComponent(search)}`;
+      if (statusFilter !== "ALLA") url += `&status=${statusFilter}`;
+      if (teknikerFilter) url += `&tekniker=${teknikerFilter}`;
+      if (kundFilter) url += `&kundId=${kundFilter}`;
+      
+      const response = await fetch(url);
+      if (!response.ok) throw new Error('Kunde inte hämta arbetsordrar');
+      
+      const data = await response.json();
+      setArbetsordrar(data.arbetsordrar);
+      setPagination(data.pagination);
+      // Säkerställ att statusStats från API:et också hanterar MATNING eller har en fallback
+      const apiStatusStats = data.statusStats || {};
+      const completeStatusStats = Object.fromEntries(
+        Object.values(ArbetsorderStatus).map(statusValue => [
+          statusValue,
+          apiStatusStats[statusValue] || 0 // Default till 0 om statusen saknas från API:et
+        ])
+      ) as Record<ArbetsorderStatus, number | undefined>;
+      setStatusStats(completeStatusStats);
+    } catch (error) {
+      console.error('Fel vid hämtning av arbetsordrar:', error);
+      toast.error('Kunde inte hämta arbetsordrar');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     fetchArbetsordrar();
@@ -116,9 +147,7 @@ export default function ArbetsordrarPage() {
   const fetchAnstallda = async () => {
     try {
       const response = await fetch('/api/anvandare');
-      if (!response.ok) {
-        throw new Error('Kunde inte hämta anställda');
-      }
+      if (!response.ok) throw new Error('Kunde inte hämta anställda');
       const data = await response.json();
       setAnstallda(data.anvandare);
     } catch (error) {
@@ -130,74 +159,22 @@ export default function ArbetsordrarPage() {
   const fetchKundInfo = async (kundId: string) => {
     try {
       const response = await fetch(`/api/kunder/${kundId}`);
-      
-      if (!response.ok) {
-        throw new Error('Kunde inte hämta kundinformation');
-      }
-      
+      if (!response.ok) throw new Error('Kunde inte hämta kundinformation');
       const kund = await response.json();
-      
       let kundNamn = '';
-      if (kund.kundTyp === 'PRIVAT' && kund.privatperson) {
-        kundNamn = `${kund.privatperson.fornamn} ${kund.privatperson.efternamn}`;
-      } else if (kund.kundTyp === 'FORETAG' && kund.foretag) {
-        kundNamn = kund.foretag.foretagsnamn;
-      } else {
-        kundNamn = `Kund #${kund.id}`;
-      }
-      
-      setKundInfo({
-        id: kund.id,
-        namn: kundNamn
-      });
+      if (kund.kundTyp === 'PRIVAT' && kund.privatperson) kundNamn = `${kund.privatperson.fornamn} ${kund.privatperson.efternamn}`;
+      else if (kund.kundTyp === 'FORETAG' && kund.foretag) kundNamn = kund.foretag.foretagsnamn;
+      else kundNamn = `Kund #${kund.id}`;
+      setKundInfo({ id: kund.id, namn: kundNamn });
     } catch (error) {
       console.error('Fel vid hämtning av kundinformation:', error);
-      toast.error('Kunde inte hämta kundinformation');
       setKundInfo(null);
     }
   };
   
-  const fetchArbetsordrar = async () => {
-    try {
-      setLoading(true);
-      let url = `/api/arbetsordrar?page=${pagination.page}&pageSize=${pagination.pageSize}`;
-      
-      if (search) {
-        url += `&search=${encodeURIComponent(search)}`;
-      }
-      
-      if (statusFilter !== "ALLA") {
-        url += `&status=${statusFilter}`;
-      }
-      
-      if (teknikerFilter) {
-        url += `&tekniker=${teknikerFilter}`;
-      }
-      
-      if (kundFilter) {
-        url += `&kundId=${kundFilter}`;
-      }
-      
-      const response = await fetch(url);
-      
-      if (!response.ok) {
-        throw new Error('Kunde inte hämta arbetsordrar');
-      }
-      
-      const data = await response.json();
-      setArbetsordrar(data.arbetsordrar);
-      setPagination(data.pagination);
-      setStatusStats(data.statusStats || {});
-    } catch (error) {
-      console.error('Fel vid hämtning av arbetsordrar:', error);
-      toast.error('Kunde inte hämta arbetsordrar');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
+    setPagination(prev => ({ ...prev, page: 1 }));
   };
 
   const handleStatusFilterChange = (newStatus: ArbetsorderStatus | "ALLA") => {
@@ -214,24 +191,35 @@ export default function ArbetsordrarPage() {
     setPagination(prev => ({ ...prev, page: newPage }));
   };
 
+  const handleArbetsorderRowClick = (arbetsorder: ArbetsorderData) => {
+    router.push(`/arbetsordrar/${arbetsorder.id}`);
+  };
+  
   const getStatusColor = (status: ArbetsorderStatus) => {
     switch (status) {
-      case ArbetsorderStatus.OFFERT:
-        return "bg-yellow-100 text-yellow-800 border-yellow-200";
-      case ArbetsorderStatus.BEKRAFTAD:
-        return "bg-blue-100 text-blue-800 border-blue-200";
-      case ArbetsorderStatus.PAGAENDE:
-        return "bg-purple-100 text-purple-800 border-purple-200";
-      case ArbetsorderStatus.SLUTFORD:
-        return "bg-green-100 text-green-800 border-green-200";
-      case ArbetsorderStatus.FAKTURERAD:
-        return "bg-gray-100 text-gray-800 border-gray-200";
-      case ArbetsorderStatus.AVBRUTEN:
-        return "bg-red-100 text-red-800 border-red-200";
-      default:
-        return "bg-gray-100 text-gray-800 border-gray-200";
+      case ArbetsorderStatus.MATNING: return "bg-orange-100 text-orange-800 border-orange-200"; // Färg för MATNING
+      case ArbetsorderStatus.OFFERT: return "bg-yellow-100 text-yellow-800 border-yellow-200";
+      case ArbetsorderStatus.AKTIV: return "bg-blue-100 text-blue-800 border-blue-200"; 
+      case ArbetsorderStatus.SLUTFORD: return "bg-green-100 text-green-800 border-green-200";
+      case ArbetsorderStatus.FAKTURERAD: return "bg-gray-100 text-gray-800 border-gray-200";
+      case ArbetsorderStatus.AVBRUTEN: return "bg-red-100 text-red-800 border-red-200";
+      default: return "bg-gray-100 text-gray-800 border-gray-200";
     }
   };
+  
+  // Uppdatera statusknapparna för att inkludera MATNING
+  const statusButtonDefinitions = [
+    { value: "ALLA" as const, label: "Alla" },
+    { value: ArbetsorderStatus.MATNING, label: "Mätning" },
+    { value: ArbetsorderStatus.OFFERT, label: "Offert" },
+    { value: ArbetsorderStatus.AKTIV, label: "Aktiv" },
+    { value: ArbetsorderStatus.SLUTFORD, label: "Slutförd" },
+    { value: ArbetsorderStatus.FAKTURERAD, label: "Fakturerad" },
+    { value: ArbetsorderStatus.AVBRUTEN, label: "Avbruten" },
+  ];
+
+  const totalArbetsordrar = Object.values(statusStats).reduce((sum, count) => (sum || 0) + (count || 0), 0);
+
 
   return (
     <div className="space-y-6">
@@ -250,116 +238,69 @@ export default function ArbetsordrarPage() {
                   <Button 
                     variant="link" 
                     className="h-auto p-0" 
-                    onClick={() => setKundFilter("")}
+                    onClick={() => {
+                        setKundFilter("");
+                    }}
                   >
-                    Visa alla arbetsordrar
+                    (Visa alla arbetsordrar)
                   </Button>
                 </span>
               ) 
-              : "Hantera arbetsordrar"}
+              : "Hantera och se alla arbetsordrar"}
           </p>
         </div>
-        {/* "Ny arbetsorder" button is moved into the Card below for consistency */}
       </div>
 
       <Card>
         <CardContent className="space-y-4 pt-6">
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-            <button
-              onClick={() => handleStatusFilterChange("ALLA")}
-              className={`flex flex-col items-center justify-center p-3 border rounded-lg transition-colors ${
-                statusFilter === "ALLA" ? "border-primary bg-primary/10" : "border-gray-200 hover:bg-gray-50"
-              }`}
-            >
-              <span className="text-xl font-semibold">{Object.values(statusStats).reduce((a, b) => a + b, 0) || 0}</span>
-              <span className="text-sm text-gray-600">Alla</span>
-            </button>
-            
-            <button
-              onClick={() => handleStatusFilterChange(ArbetsorderStatus.OFFERT)}
-              className={`flex flex-col items-center justify-center p-3 border rounded-lg transition-colors ${
-                statusFilter === ArbetsorderStatus.OFFERT ? "border-primary bg-primary/10" : "border-gray-200 hover:bg-gray-50"
-              }`}
-            >
-              <span className="text-xl font-semibold">{statusStats[ArbetsorderStatus.OFFERT] || 0}</span>
-              <span className="text-sm text-gray-600">Offert</span>
-            </button>
-            
-            <button
-              onClick={() => handleStatusFilterChange(ArbetsorderStatus.BEKRAFTAD)}
-              className={`flex flex-col items-center justify-center p-3 border rounded-lg transition-colors ${
-                statusFilter === ArbetsorderStatus.BEKRAFTAD ? "border-primary bg-primary/10" : "border-gray-200 hover:bg-gray-50"
-              }`}
-            >
-              <span className="text-xl font-semibold">{statusStats[ArbetsorderStatus.BEKRAFTAD] || 0}</span>
-              <span className="text-sm text-gray-600">Bekräftad</span>
-            </button>
-            
-            <button
-              onClick={() => handleStatusFilterChange(ArbetsorderStatus.PAGAENDE)}
-              className={`flex flex-col items-center justify-center p-3 border rounded-lg transition-colors ${
-                statusFilter === ArbetsorderStatus.PAGAENDE ? "border-primary bg-primary/10" : "border-gray-200 hover:bg-gray-50"
-              }`}
-            >
-              <span className="text-xl font-semibold">{statusStats[ArbetsorderStatus.PAGAENDE] || 0}</span>
-              <span className="text-sm text-gray-600">Pågående</span>
-            </button>
-            
-            <button
-              onClick={() => handleStatusFilterChange(ArbetsorderStatus.SLUTFORD)}
-              className={`flex flex-col items-center justify-center p-3 border rounded-lg transition-colors ${
-                statusFilter === ArbetsorderStatus.SLUTFORD ? "border-primary bg-primary/10" : "border-gray-200 hover:bg-gray-50"
-              }`}
-            >
-              <span className="text-xl font-semibold">{statusStats[ArbetsorderStatus.SLUTFORD] || 0}</span>
-              <span className="text-sm text-gray-600">Slutförd</span>
-            </button>
-            
-            <button
-              onClick={() => handleStatusFilterChange(ArbetsorderStatus.FAKTURERAD)}
-              className={`flex flex-col items-center justify-center p-3 border rounded-lg transition-colors ${
-                statusFilter === ArbetsorderStatus.FAKTURERAD ? "border-primary bg-primary/10" : "border-gray-200 hover:bg-gray-50"
-              }`}
-            >
-              <span className="text-xl font-semibold">{statusStats[ArbetsorderStatus.FAKTURERAD] || 0}</span>
-              <span className="text-sm text-gray-600">Fakturerad</span>
-            </button>
-          </div>
-
-          <div className="flex flex-col sm:flex-row gap-4 justify-between items-center">
-            <form onSubmit={handleSearch} className="flex flex-1 gap-2">
+          <div className="flex flex-wrap gap-3 items-center">
+            <form onSubmit={handleSearch} className="flex flex-grow sm:flex-grow-0 sm:w-auto gap-2 items-center">
               <Input 
-                placeholder="Sök på namn, kundnummer..." 
+                placeholder="Sök order/kund..." 
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="max-w-[400px]"
+                className="h-9 min-w-[200px] sm:max-w-xs"
               />
-              <Button type="submit" variant="outline">
-                <Search className="h-4 w-4 mr-2" />
-                Sök
+              <Button type="submit" variant="secondary" size="sm" className="shadow-sm h-9">
+                <Search className="h-4 w-4 md:mr-2" />
+                <span className="hidden md:inline">Sök</span>
               </Button>
             </form>
-            
-            <div className="flex gap-2 items-center">
+
+            <div className="w-full sm:w-auto">
               <select 
-                className="block rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 py-2 px-3 pr-8 h-9 text-sm" // Added h-9 and text-sm for consistency
+                className="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary focus:ring focus:ring-primary/50 py-2 px-3 h-9 text-sm"
                 value={teknikerFilter}
                 onChange={(e) => handleTeknikerFilterChange(e.target.value)}
               >
                 <option value="">Alla tekniker</option>
                 {anstallda.map((anstalld) => (
-                  <option key={anstalld.id} value={anstalld.id}>
+                  <option key={anstalld.id} value={anstalld.id.toString()}>
                     {anstalld.fornamn} {anstalld.efternamn}
                   </option>
                 ))}
               </select>
-              <Link href={kundFilter ? `/arbetsordrar/ny?kundId=${kundFilter}` : "/arbetsordrar/ny"}>
-                <Button size="sm"> {/* Added size="sm" for consistency */}
-                  <PlusCircle className="mr-2 h-4 w-4" />
-                  Ny arbetsorder
-                </Button>
-              </Link>
             </div>
+            
+            {statusButtonDefinitions.map((statusDef) => {
+                const count = statusDef.value === "ALLA" 
+                                ? totalArbetsordrar 
+                                : statusStats[statusDef.value as ArbetsorderStatus] || 0;
+                return (
+                    <Button
+                        key={statusDef.value}
+                        variant={statusFilter === statusDef.value ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => handleStatusFilterChange(statusDef.value)}
+                        className="shadow-sm data-[state=active]:ring-2 data-[state=active]:ring-primary data-[state=active]:ring-offset-1 h-9"
+                    >
+                        {statusDef.label}
+                        <span className="ml-1.5 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-full px-1.5 py-0.5 text-xs font-mono">
+                            {count}
+                        </span>
+                    </Button>
+                );
+            })}
           </div>
 
           <ArbetsorderLista 
@@ -367,11 +308,12 @@ export default function ArbetsordrarPage() {
             pagination={pagination} 
             loading={loading} 
             onPageChange={handlePageChange} 
-            onRefresh={fetchArbetsordrar}
-            getStatusColor={getStatusColor}
+            getStatusColor={getStatusColor} // Skicka med getStatusColor
+            onArbetsorderRowClick={handleArbetsorderRowClick}
           />
         </CardContent>
       </Card>
     </div>
   );
 }
+// --- end diff ---

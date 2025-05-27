@@ -1,7 +1,7 @@
+// /app/(skyddade-sidor)/arbetsordrar/komponenter/arbetsorder-lista.tsx
 'use client';
 
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -13,8 +13,8 @@ import {
 import { ArbetsorderStatus } from "@prisma/client";
 import { format } from "date-fns";
 import { sv } from "date-fns/locale";
-import { Loader2, User } from "lucide-react"; // Removed Edit and Info
-import { useRouter } from "next/navigation"; // Added useRouter
+import { Loader2, User } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { ArbetsorderData } from "../page";
 
 interface ArbetsorderListaProps {
@@ -27,8 +27,9 @@ interface ArbetsorderListaProps {
   };
   loading: boolean;
   onPageChange: (page: number) => void;
-  onRefresh: () => void;
+  // onRefresh prop är borttagen härifrån
   getStatusColor: (status: ArbetsorderStatus) => string;
+  onArbetsorderRowClick: (arbetsorder: ArbetsorderData) => void;
 }
 
 export default function ArbetsorderLista({
@@ -36,26 +37,21 @@ export default function ArbetsorderLista({
   pagination,
   loading,
   onPageChange,
-  onRefresh,
+  // onRefresh, // onRefresh parameter är borttagen
   getStatusColor,
+  onArbetsorderRowClick,
 }: ArbetsorderListaProps) {
-  const router = useRouter(); // Initialize useRouter
+  const router = useRouter(); 
 
   const getKundNamn = (arbetsorder: ArbetsorderData) => {
     const { kund } = arbetsorder;
-    
-    if (kund.privatperson) {
-      return `${kund.privatperson.fornamn} ${kund.privatperson.efternamn}`;
-    } else if (kund.foretag) {
-      return kund.foretag.foretagsnamn;
-    }
-    
+    if (kund.privatperson) return `${kund.privatperson.fornamn} ${kund.privatperson.efternamn}`;
+    if (kund.foretag) return kund.foretag.foretagsnamn;
     return `Kund #${kund.id}`;
   };
 
   const formatCurrency = (amount: number | null) => {
-    if (amount === null) return '-';
-    
+    if (amount === null || amount === undefined) return '-';
     return new Intl.NumberFormat('sv-SE', {
       style: 'currency',
       currency: 'SEK',
@@ -69,48 +65,35 @@ export default function ArbetsorderLista({
   };
 
   const getStatusText = (status: ArbetsorderStatus) => {
-    switch (status) {
-      case ArbetsorderStatus.OFFERT:
-        return 'Offert';
-      case ArbetsorderStatus.BEKRAFTAD:
-        return 'Bekräftad';
-      case ArbetsorderStatus.PAGAENDE:
-        return 'Pågående';
-      case ArbetsorderStatus.SLUTFORD:
-        return 'Slutförd';
-      case ArbetsorderStatus.FAKTURERAD:
-        return 'Fakturerad';
-      case ArbetsorderStatus.AVBRUTEN:
-        return 'Avbruten';
-      default:
-        return status;
-    }
-  };
-
-  const handleRowClick = (arbetsorderId: number) => {
-    router.push(`/arbetsordrar/${arbetsorderId}`);
+    const map = { 
+        [ArbetsorderStatus.OFFERT]: 'Offert', 
+        [ArbetsorderStatus.AKTIV]: 'Aktiv', 
+        [ArbetsorderStatus.SLUTFORD]: 'Slutförd', 
+        [ArbetsorderStatus.FAKTURERAD]: 'Fakturerad', 
+        [ArbetsorderStatus.AVBRUTEN]: 'Avbruten' 
+    };
+    return map[status as keyof typeof map] || status.toString();
   };
 
   return (
-    <Card>
-      <div className="overflow-x-auto">
+    <> 
+      <div className="overflow-x-auto border rounded-lg">
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead>Nr</TableHead>
               <TableHead>Kund</TableHead>
-              <TableHead>Märkning</TableHead> {/* Ny kolumn */}
+              <TableHead>Märkning</TableHead>
               <TableHead>Tekniker</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="text-right">Summa</TableHead>
               <TableHead>Skapad</TableHead>
-              {/* Åtgärder kolumnen är borttagen */}
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center py-10"> {/* Uppdaterad colSpan till 7 */}
+                <TableCell colSpan={7} className="text-center py-10">
                   <div className="flex justify-center items-center">
                     <Loader2 className="h-6 w-6 animate-spin mr-2" />
                     <span>Laddar arbetsordrar...</span>
@@ -119,7 +102,7 @@ export default function ArbetsorderLista({
               </TableRow>
             ) : arbetsordrar.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center py-10"> {/* Uppdaterad colSpan till 7 */}
+                <TableCell colSpan={7} className="text-center py-10">
                   Inga arbetsordrar hittades.
                 </TableCell>
               </TableRow>
@@ -127,8 +110,8 @@ export default function ArbetsorderLista({
               arbetsordrar.map((arbetsorder) => (
                 <TableRow 
                   key={arbetsorder.id}
-                  onClick={() => handleRowClick(arbetsorder.id)} // Added onClick handler
-                  className="cursor-pointer hover:bg-muted/50" // Added cursor and hover style
+                  onClick={() => onArbetsorderRowClick(arbetsorder)}
+                  className="cursor-pointer hover:bg-muted/50"
                 >
                   <TableCell className="font-medium">#{arbetsorder.id}</TableCell>
                   <TableCell>
@@ -137,7 +120,7 @@ export default function ArbetsorderLista({
                       <span>{getKundNamn(arbetsorder)}</span>
                     </div>
                   </TableCell>
-                  <TableCell>{arbetsorder.referensMärkning || '-'}</TableCell> {/* Ny cell för märkning */}
+                  <TableCell>{arbetsorder.referensMärkning || '-'}</TableCell>
                   <TableCell>
                     {arbetsorder.ansvarigTekniker 
                       ? `${arbetsorder.ansvarigTekniker.fornamn} ${arbetsorder.ansvarigTekniker.efternamn}`
@@ -145,7 +128,7 @@ export default function ArbetsorderLista({
                     }
                   </TableCell>
                   <TableCell>
-                    <span className={`inline-flex rounded-full px-2 py-1 text-xs ${getStatusColor(arbetsorder.status)}`}>
+                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium border ${getStatusColor(arbetsorder.status)}`}>
                       {getStatusText(arbetsorder.status)}
                     </span>
                   </TableCell>
@@ -155,7 +138,6 @@ export default function ArbetsorderLista({
                   <TableCell>
                     {formatDate(arbetsorder.skapadDatum)}
                   </TableCell>
-                  {/* Cell för Åtgärder är borttagen */}
                 </TableRow>
               ))
             )}
@@ -163,7 +145,6 @@ export default function ArbetsorderLista({
         </Table>
       </div>
 
-      {/* Paginering */}
       {pagination.totalPages > 1 && (
         <div className="flex items-center justify-between p-4 border-t">
           <div className="text-sm text-muted-foreground">
@@ -188,7 +169,6 @@ export default function ArbetsorderLista({
               .map((page, index, array) => {
                 const showEllipsisAfter =
                   index < array.length - 1 && array[index + 1] - page > 1;
-
                 return (
                   <div key={page} className="flex items-center">
                     <Button
@@ -216,6 +196,6 @@ export default function ArbetsorderLista({
           </div>
         </div>
       )}
-    </Card>
+    </>
   );
 }

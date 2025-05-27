@@ -1,4 +1,4 @@
-// File: /Users/nav/Projects/glassmaestro/glassmaster/app/(skyddade-sidor)/kunder/komponenter/kund-lista.tsx
+// /app/(skyddade-sidor)/kunder/komponenter/kund-lista.tsx
 'use client';
 
 import { Button } from "@/components/ui/button";
@@ -11,8 +11,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { KundTyp } from "@prisma/client";
-import { Loader2, Phone } from "lucide-react"; // Ta bort Edit
-// Link är inte längre nödvändig här
+import { Loader2, Phone, PlusCircle, Home } from "lucide-react"; 
 import { useRouter } from "next/navigation"; 
 import { KundData } from "../page";
 
@@ -26,8 +25,8 @@ interface KundListaProps {
   };
   loading: boolean;
   onPageChange: (page: number) => void;
-  onRefresh: () => void;
-  // onEdit: (kund: KundData) => void; // Ta bort onEdit prop
+  // onRefresh: () => void; // DENNA RAD TAS BORT FRÅN PROPS
+  onKundRowClick: (kund: KundData) => void; 
 }
 
 export function KundLista({
@@ -35,8 +34,8 @@ export function KundLista({
   pagination,
   loading,
   onPageChange,
-  onRefresh,
-  // onEdit, // Ta bort onEdit prop
+  // onRefresh, // DENNA PARAMETER TAS BORT
+  onKundRowClick,
 }: KundListaProps) {
   const router = useRouter(); 
 
@@ -62,11 +61,6 @@ export function KundLista({
     return '-';
   };
 
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('sv-SE');
-  };
-
   return (
     <div className="border rounded-lg overflow-hidden">
       <div className="overflow-x-auto">
@@ -78,14 +72,14 @@ export function KundLista({
               <TableHead>Kontaktperson</TableHead>
               <TableHead>Telefon</TableHead>
               <TableHead>E-post</TableHead>
-              <TableHead>Skapad</TableHead>
-              {/* <TableHead className="text-right">Åtgärder</TableHead> Ta bort Åtgärder-kolumnen */}
+              <TableHead>Adress</TableHead>
+              <TableHead className="text-right w-[160px]">Åtgärder</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={6} className="text-center py-10"> {/* Uppdatera colSpan */}
+                <TableCell colSpan={7} className="text-center py-10">
                   <div className="flex justify-center items-center">
                     <Loader2 className="h-6 w-6 animate-spin mr-2" />
                     <span>Laddar kunder...</span>
@@ -94,7 +88,7 @@ export function KundLista({
               </TableRow>
             ) : kunder.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="text-center py-10"> {/* Uppdatera colSpan */}
+                <TableCell colSpan={7} className="text-center py-10">
                   Inga kunder hittades.
                 </TableCell>
               </TableRow>
@@ -103,7 +97,7 @@ export function KundLista({
                 <TableRow 
                   key={kund.id}
                   className="hover:bg-gray-50 cursor-pointer"
-                  onClick={() => router.push(`/kunder/${kund.id}`)} 
+                  onClick={() => onKundRowClick(kund)}
                 >
                   <TableCell className="font-medium">
                     {getKundNamn(kund)}
@@ -133,12 +127,26 @@ export function KundLista({
                       </a>
                     ) : '-'}
                   </TableCell>
-                  <TableCell>{formatDate(kund.skapadDatum)}</TableCell>
-                  {/* 
-                  <TableCell className="text-right">
-                    Ta bort innehållet här
+                  <TableCell>
+                    <div className="flex items-center">
+                        <Home className="h-3.5 w-3.5 mr-1.5 text-gray-500 flex-shrink-0" />
+                        <span className="truncate max-w-[200px]">{kund.adress}</span>
+                    </div>
                   </TableCell>
-                  */}
+                  <TableCell className="text-right">
+                    <Button
+                      variant="default"
+                      size="sm"
+                      className="bg-green-600 hover:bg-green-700 text-white whitespace-nowrap"
+                      onClick={(e) => {
+                        e.stopPropagation(); 
+                        router.push(`/arbetsordrar/ny?kundId=${kund.id}`);
+                      }}
+                    >
+                      <PlusCircle className="h-4 w-4 mr-1.5" />
+                      + Arbetsorder
+                    </Button>
+                  </TableCell>
                 </TableRow>
               ))
             )}
