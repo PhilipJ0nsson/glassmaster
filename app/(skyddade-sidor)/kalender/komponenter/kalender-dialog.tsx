@@ -1,6 +1,9 @@
 // File: app/(skyddade-sidor)/kalender/komponenter/kalender-dialog.tsx
-// Fullständig kod med justerade defaultValues för useForm och filtrering av arbetsordrar.
-
+// Mode: Modifying
+// Change: Removed explicit `ansvarigTeknikerId` from `ApiArbetsorder` interface as it's correctly inherited from Prisma's `Arbetsorder` type.
+// Reasoning: To resolve TypeScript error TS2430 by ensuring type compatibility with the base Prisma type.
+// --- start diff ---
+// File: app/(skyddade-sidor)/kalender/komponenter/kalender-dialog.tsx
 'use client';
 
 import { Button } from "@/components/ui/button";
@@ -29,19 +32,25 @@ import {
 } from "@/components/ui/dropdown-menu"; 
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { MotesTyp, Kund, Privatperson, Foretag, Arbetsorder as PrismaArbetsorder, ArbetsorderStatus, Orderrad as PrismaOrderrad, Prislista } from "@prisma/client";
-import { format } from "date-fns";
-import { useEffect, useState, useMemo } from "react";
+import { MotesTyp, Kund, Privatperson, Foretag, Arbetsorder as PrismaArbetsorder, ArbetsorderStatus, Orderrad as PrismaOrderrad, Prislista, AnvandareRoll } from "@prisma/client";
+import { format, addHours } from "date-fns";
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 import { Loader2, Check, Briefcase, User as UserIcon, Phone, Home, Info, ListChecks, Users, ChevronsUpDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSearchParams } from "next/navigation"; 
+import { useSession } from "next-auth/react";
 
 interface ApiKund extends Kund { privatperson?: Privatperson | null; foretag?: Foretag | null; }
 interface ApiOrderrad extends PrismaOrderrad { prislista: Prislista; }
-interface ApiArbetsorder extends PrismaArbetsorder { kund?: ApiKund | null; orderrader: ApiOrderrad[]; }
+// Ta bort ansvarigTeknikerId härifrån, den ärvs från PrismaArbetsorder
+interface ApiArbetsorder extends PrismaArbetsorder { 
+    kund?: ApiKund | null; 
+    orderrader: ApiOrderrad[]; 
+    // ansvarigTeknikerId?: number | null; // BORTTAGEN RAD
+}
 
 const kalenderSchema = z.object({
   titel: z.string().optional(),
@@ -60,6 +69,7 @@ interface KalenderPanelContentProps {
   onEventCreated: () => void; 
   onPanelClose: () => void;  
   initialDate: Date | null; 
+  initialEndDate?: Date | null; 
   anstallda: Array<{ id: number; fornamn: string; efternamn: string; }>;
   eventId?: number | null;    
 }
@@ -68,9 +78,11 @@ export default function KalenderPanelContent({
   onEventCreated,
   onPanelClose,
   initialDate,
+  initialEndDate, 
   anstallda,
   eventId = null, 
 }: KalenderPanelContentProps) {
+  const { data: session } = useSession();
   const isEditing = eventId !== null;
   const searchParams = useSearchParams(); 
 
@@ -85,8 +97,9 @@ export default function KalenderPanelContent({
   const [sokAnsvarig, setSokAnsvarig] = useState("");
   const [sokMedarbetare, setSokMedarbetare] = useState("");
   
-  const [initialArbetsorderAnsvarigId, setInitialArbetsorderAnsvarigId] = useState<string | null>(null);
-  const [loadingInitialAO, setLoadingInitialAO] = useState(false);
+  const [loadingInitialData, setLoadingInitialData] = useState(!isEditing); 
+
+  const initialValuesSetRef = useRef(false);
 
 
   const form = useForm<KalenderFormValues>({
@@ -97,107 +110,15 @@ export default function KalenderPanelContent({
         datumTid: "", 
         slutDatumTid: "", 
         motestyp: MotesTyp.MOTE,
-        ansvarigId: "",
+        ansvarigId: session?.user?.id || "", 
         kundId: "ingen",
         arbetsorderId: "ingen",
         medarbetareIds: [],
     }
   });
 
-  useEffect(() => {
-    const nyHandelseForAO = searchParams.get('nyHandelseForAO');
-    if (nyHandelseForAO && !isEditing) { 
-        const fetchArbetsorderAnsvarig = async () => {
-            setLoadingInitialAO(true);
-            try {
-                const response = await fetch(`/api/arbetsordrar/${nyHandelseForAO}`);
-                if (response.ok) {
-                    const aoData: ApiArbetsorder = await response.json();
-                    if (aoData.ansvarigTeknikerId) {
-                        setInitialArbetsorderAnsvarigId(aoData.ansvarigTeknikerId.toString());
-                    } else {
-                        setInitialArbetsorderAnsvarigId(null);
-                    }
-                } else {
-                    console.warn(`Kunde inte hämta AO ${nyHandelseForAO} för att förifylla ansvarig.`);
-                    setInitialArbetsorderAnsvarigId(null);
-                }
-            } catch (error) {
-                console.error("Fel vid hämtning av AO-ansvarig:", error);
-                setInitialArbetsorderAnsvarigId(null);
-            } finally {
-                setLoadingInitialAO(false);
-            }
-        };
-        fetchArbetsorderAnsvarig();
-    } else {
-         setInitialArbetsorderAnsvarigId(null); 
-    }
-  }, [searchParams, isEditing]);
-
-  useEffect(() => {
-    if (isEditing) {
-        if (eventId && !loading) { 
-             fetchEvent(eventId); 
-        }
-        return; 
-    }
-
-    if (loadingInitialAO) {
-        return;
-    }
-
-    const ansvarigQueryParam = searchParams.get('ansvarig');
-    const nyHandelseForAOQueryParam = searchParams.get('nyHandelseForAO');
-
-    const startDate = initialDate ? format(initialDate, "yyyy-MM-dd'T'HH:mm") : format(new Date(), "yyyy-MM-dd'T'HH:mm");
-    let endDateObject = initialDate ? new Date(initialDate) : new Date();
-    endDateObject.setHours(endDateObject.getHours() + 1);
-    const endDate = format(endDateObject, "yyyy-MM-dd'T'HH:mm");
-
-    let defaultAnsvarigId = "";
-    if (initialArbetsorderAnsvarigId) { 
-        defaultAnsvarigId = initialArbetsorderAnsvarigId;
-    } else if (ansvarigQueryParam) { 
-        defaultAnsvarigId = ansvarigQueryParam;
-    }
-    
-    let defaultMotestyp: MotesTyp = MotesTyp.MOTE;
-    if (nyHandelseForAOQueryParam) {
-        defaultMotestyp = MotesTyp.ARBETSORDER; 
-    }
-    
-    form.reset({
-        titel: "",
-        beskrivning: "",
-        datumTid: startDate,
-        slutDatumTid: endDate,
-        motestyp: defaultMotestyp,
-        ansvarigId: defaultAnsvarigId,
-        kundId: "ingen", 
-        arbetsorderId: nyHandelseForAOQueryParam || "ingen", 
-        medarbetareIds: [],
-    });
-
-  }, [
-      eventId, 
-      initialDate, 
-      isEditing, 
-      loadingInitialAO, 
-      initialArbetsorderAnsvarigId, 
-      searchParams, 
-      form,
-      loading 
-  ]);
-
-
-  useEffect(() => { 
-    fetchKunder(); 
-    fetchAllaArbetsordrar(); 
-  }, []);
-
-  const fetchEvent = async (id: number) => { 
-    setLoading(true); 
+  const fetchEvent = useCallback(async (id: number) => { 
+    setLoadingInitialData(true); 
     try { 
       const r = await fetch(`/api/kalender/${id}`); 
       if (!r.ok) throw Error('Kunde inte hämta händelse'); 
@@ -213,48 +134,107 @@ export default function KalenderPanelContent({
         arbetsorderId: d.arbetsorderId?.toString() || "ingen", 
         medarbetareIds: d.medarbetare?.map((m:{anvandare:{id:number}})=>m.anvandare.id.toString()) || [] 
       }); 
+      initialValuesSetRef.current = true;
     } catch(e){
       toast.error("Kunde inte hämta händelsedata.");
       console.error(e);
       onPanelClose(); 
     } finally {
-      setLoading(false);
+      setLoadingInitialData(false);
     } 
-  };
+  }, [form, onPanelClose]);
+
+  useEffect(() => {
+    if (isEditing || initialValuesSetRef.current) {
+      return;
+    }
+
+    setLoadingInitialData(true);
+    const nyHandelseForAOQueryParam = searchParams.get('nyHandelseForAO');
+    const ansvarigQueryParam = searchParams.get('ansvarig');
+
+    const determineInitialAnsvarig = async () => {
+      if (ansvarigQueryParam) {
+        return ansvarigQueryParam;
+      }
+      if (nyHandelseForAOQueryParam) {
+        try {
+          const response = await fetch(`/api/arbetsordrar/${nyHandelseForAOQueryParam}`);
+          if (response.ok) {
+            const aoData: ApiArbetsorder = await response.json();
+            // aoData.ansvarigTeknikerId ärvs nu korrekt som number | null
+            if (aoData.ansvarigTeknikerId !== null && aoData.ansvarigTeknikerId !== undefined) { 
+              return aoData.ansvarigTeknikerId.toString();
+            }
+          }
+        } catch (error) {
+          console.error("Fel vid hämtning av AO för initial ansvarig:", error);
+        }
+      }
+      return session?.user?.id || ""; 
+    };
+
+    determineInitialAnsvarig().then(ansvarig => {
+      let defaultValuesUpdate: KalenderFormValues = {
+          titel: "",
+          beskrivning: "",
+          motestyp: nyHandelseForAOQueryParam ? MotesTyp.ARBETSORDER : MotesTyp.MOTE,
+          ansvarigId: ansvarig,
+          kundId: "ingen", 
+          arbetsorderId: nyHandelseForAOQueryParam || "ingen", 
+          medarbetareIds: [],
+          datumTid: initialDate ? format(initialDate, "yyyy-MM-dd'T'HH:mm") : format(new Date(), "yyyy-MM-dd'T'HH:mm"),
+          slutDatumTid: "" 
+      };
+
+      if (initialEndDate) {
+          defaultValuesUpdate.slutDatumTid = format(initialEndDate, "yyyy-MM-dd'T'HH:mm");
+      } else {
+          let endDateObject = initialDate ? new Date(initialDate) : new Date();
+          endDateObject = addHours(endDateObject, 1);
+          defaultValuesUpdate.slutDatumTid = format(endDateObject, "yyyy-MM-dd'T'HH:mm");
+      }
+      
+      if (nyHandelseForAOQueryParam && allaArbetsordrar.length > 0) {
+        const ao = allaArbetsordrar.find(a => a.id.toString() === nyHandelseForAOQueryParam);
+        if (ao?.kundId) {
+            defaultValuesUpdate.kundId = ao.kundId.toString();
+        }
+      }
+
+      form.reset(defaultValuesUpdate);
+      initialValuesSetRef.current = true;
+      setLoadingInitialData(false);
+    });
+
+  }, [
+      isEditing, 
+      initialDate, 
+      initialEndDate, 
+      searchParams, 
+      session, 
+      form,
+      allaArbetsordrar 
+  ]);
+
+
+  useEffect(() => {
+    if (isEditing && eventId && !initialValuesSetRef.current) { 
+      fetchEvent(eventId);
+    }
+  }, [eventId, isEditing, fetchEvent]);
+
+  useEffect(() => { 
+    fetchKunder(); 
+    fetchAllaArbetsordrar(); 
+  }, []);
 
   const fetchKunder = async () => { setLoadingKunder(true); try { const r = await fetch("/api/kunder?pageSize=10000"); if(!r.ok) throw Error('Kunde inte hämta kunder'); setKunder((await r.json()).kunder||[]); } catch(e){console.error(e);} finally {setLoadingKunder(false);} };
-  
-  const fetchAllaArbetsordrar = async () => { 
-    setLoadingArbetsordrar(true); 
-    try { 
-      // Hämtar alla statusar som kan vara relevanta att länka till,
-      // filtrering för valbarhet sker i frontend (filtreradeArbetsordrar)
-      const r = await fetch(`/api/arbetsordrar?status=${ArbetsorderStatus.MATNING},${ArbetsorderStatus.OFFERT},${ArbetsorderStatus.AKTIV},${ArbetsorderStatus.SLUTFORD}&pageSize=10000&includeOrderrader=true`); 
-      if(!r.ok) throw Error('Kunde inte hämta arbetsordrar'); 
-      setAllaArbetsordrar((await r.json()).arbetsordrar||[]); 
-    } catch(e){
-      console.error(e);
-      toast.error("Kunde inte hämta arbetsordrar för kalendern.");
-    } finally {
-      setLoadingArbetsordrar(false);
-    } 
-  };
+  const fetchAllaArbetsordrar = async () => { setLoadingArbetsordrar(true); try { const r = await fetch(`/api/arbetsordrar?status=${ArbetsorderStatus.MATNING},${ArbetsorderStatus.OFFERT},${ArbetsorderStatus.AKTIV},${ArbetsorderStatus.SLUTFORD}&pageSize=10000&includeOrderrader=true&includeAnsvarig=true`); if(!r.ok) throw Error('Kunde inte hämta arbetsordrar'); setAllaArbetsordrar((await r.json()).arbetsordrar||[]); } catch(e){ console.error(e); toast.error("Kunde inte hämta arbetsordrar för kalendern."); } finally { setLoadingArbetsordrar(false); } };
   
   const getKundNamn = (kund: ApiKund | null | undefined) => { if (!kund) return ""; if (kund.privatperson) return `${kund.privatperson.fornamn} ${kund.privatperson.efternamn}`; if (kund.foretag) return kund.foretag.foretagsnamn; return `Kund #${kund.id}`; };
+  const getArbetsorderStatusText = (status: ArbetsorderStatus | undefined) => { if (!status) return ""; const map: Record<ArbetsorderStatus, string> = { [ArbetsorderStatus.MATNING]: 'Mätning', [ArbetsorderStatus.OFFERT]: 'Offert', [ArbetsorderStatus.AKTIV]: 'Aktiv', [ArbetsorderStatus.SLUTFORD]: 'Slutförd', [ArbetsorderStatus.FAKTURERAD]: 'Fakturerad', [ArbetsorderStatus.AVBRUTEN]: 'Avbruten' }; return map[status] || status.toString(); };
   
-  const getArbetsorderStatusText = (status: ArbetsorderStatus | undefined) => { 
-    if (!status) return "";
-    const map: Record<ArbetsorderStatus, string> = {
-      [ArbetsorderStatus.MATNING]: 'Mätning',
-      [ArbetsorderStatus.OFFERT]: 'Offert', 
-      [ArbetsorderStatus.AKTIV]: 'Aktiv', 
-      [ArbetsorderStatus.SLUTFORD]: 'Slutförd', 
-      [ArbetsorderStatus.FAKTURERAD]: 'Fakturerad', 
-      [ArbetsorderStatus.AVBRUTEN]: 'Avbruten' 
-    }; 
-    return map[status] || status.toString(); 
-  };
-
   const watchedMotestyp = form.watch("motestyp");
   const watchedKundId = form.watch("kundId");
   const watchedArbetsorderId = form.watch("arbetsorderId");
@@ -267,8 +247,6 @@ export default function KalenderPanelContent({
   const valdaMedarbetare = useMemo(() => anstallda.filter(a => watchedMedarbetareIds.includes(a.id.toString())), [anstallda, watchedMedarbetareIds]);
 
   const filtreradeKunder = useMemo(() => { if (!sokKund) return kunder; return kunder.filter(k => getKundNamn(k).toLowerCase().includes(sokKund.toLowerCase())); }, [sokKund, kunder]);
-  
-  // Filtrerar arbetsordrar som kan väljas i dropdown för kalenderhändelse
   const filtreradeArbetsordrarForKalenderVal = useMemo(() => { 
     let aoForVal = allaArbetsordrar.filter(ao => 
         ao.status === ArbetsorderStatus.MATNING || ao.status === ArbetsorderStatus.AKTIV
@@ -287,17 +265,21 @@ export default function KalenderPanelContent({
   const filtreradeAnstalldaForMedarbetare = useMemo(() => { let medarbetareOptions = anstallda.filter(a => a.id.toString() !== watchedAnsvarigId); if (!sokMedarbetare) return medarbetareOptions; return medarbetareOptions.filter(a => `${a.fornamn} ${a.efternamn}`.toLowerCase().includes(sokMedarbetare.toLowerCase())); }, [sokMedarbetare, anstallda, watchedAnsvarigId]);
   
   useEffect(() => { 
-    if (watchedArbetsorderId && watchedArbetsorderId !== "ingen") { 
+    if (watchedArbetsorderId && watchedArbetsorderId !== "ingen" && allaArbetsordrar.length > 0) { 
       const ao = allaArbetsordrar.find(a => a.id.toString() === watchedArbetsorderId); 
       if (ao?.kundId && form.getValues("kundId") !== ao.kundId.toString()) {
         form.setValue("kundId", ao.kundId.toString(), {shouldValidate:true});
       }
+      
+      if (!isEditing && !searchParams.get('ansvarig') && ao?.ansvarigTeknikerId != null && form.getValues("ansvarigId") !== ao.ansvarigTeknikerId.toString()) {
+          form.setValue("ansvarigId", ao.ansvarigTeknikerId.toString(), {shouldValidate:true});
+      }
     } 
-  }, [watchedArbetsorderId, allaArbetsordrar, form]); 
+  }, [watchedArbetsorderId, allaArbetsordrar, form, isEditing, searchParams]); 
   
   useEffect(() => { 
     const aoId = form.getValues("arbetsorderId"); 
-    if (watchedKundId !== "ingen" && aoId !== "ingen") { 
+    if (watchedKundId !== "ingen" && aoId !== "ingen" && allaArbetsordrar.length > 0) { 
       const ao = allaArbetsordrar.find(a=>a.id.toString()===aoId); 
       if(ao?.kundId?.toString()!==watchedKundId) {
         form.setValue("arbetsorderId","ingen",{shouldValidate:true});
@@ -355,6 +337,28 @@ export default function KalenderPanelContent({
   const showKundSelection = watchedMotestyp === MotesTyp.ARBETSORDER || watchedMotestyp === MotesTyp.MOTE;
   const showArbetsorderSelection = watchedMotestyp === MotesTyp.ARBETSORDER;
   const shouldRenderPreviewSection = showKundSelection && (!!valdKund || (!!valdArbetsorder && showArbetsorderSelection));
+
+  const isAnsvarigFieldDisabled = useMemo(() => {
+    if (!isEditing) return false; 
+    
+    // Få tag på originalansvarig för *denna specifika kalenderhändelse*.
+    // Detta värde sätts när `fetchEvent` körs och formuläret fylls.
+    const originalEventAnsvarigIdForThisEdit = form.getValues("ansvarigId"); 
+
+    if (session?.user?.role === AnvandareRoll.ADMIN || session?.user?.role === AnvandareRoll.ARBETSLEDARE) {
+      return false; 
+    }
+    if (session?.user?.role === AnvandareRoll.TEKNIKER) {
+      return originalEventAnsvarigIdForThisEdit !== session?.user?.id;
+    }
+    return true; 
+  }, [isEditing, session, form]);
+
+
+  if (loadingInitialData && !isEditing) {
+    return <div className="p-6 flex justify-center items-center min-h-[200px]"><Loader2 className="h-6 w-6 animate-spin"/> Laddar formulär...</div>;
+  }
+
 
   return (
     <Form {...form}>
@@ -433,7 +437,11 @@ export default function KalenderPanelContent({
                     <FormField control={form.control} name="ansvarigId" render={({ field }) => ( 
                         <FormItem> 
                             <FormLabel className="text-xs">Ansvarig *</FormLabel> 
-                            <Select onValueChange={field.onChange} value={field.value}> 
+                            <Select 
+                                onValueChange={field.onChange} 
+                                value={field.value}
+                                disabled={isAnsvarigFieldDisabled} 
+                            > 
                             <FormControl><SelectTrigger className="h-9 w-full"><SelectValue placeholder="Välj ansvarig" /></SelectTrigger></FormControl> 
                             <SelectContent>
                                 <div className="p-1">
@@ -532,3 +540,4 @@ export default function KalenderPanelContent({
     </Form>
   );
 }
+// --- end diff ---

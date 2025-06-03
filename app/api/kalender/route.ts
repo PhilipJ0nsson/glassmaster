@@ -1,4 +1,9 @@
 // File: app/api/kalender/route.ts
+// Mode: Modifying
+// Change: Implemented stricter filtering for "kommande aktiviteter" (`historik=false`) to only include events where `slutDatumTid` is strictly in the future.
+// Reasoning: To prevent an event whose time has passed (even recently) from appearing in both "Bokade Aktiviteter" and "Obokade Jobb" on the dashboard.
+// --- start diff ---
+// File: app/api/kalender/route.ts
 // Fullständig GET-funktion med ytterligare åtstramning för Admin/AL "Alla Aktiviteter".
 
 import { prisma } from '@/lib/prisma';
@@ -33,22 +38,41 @@ export async function GET(req: NextRequest) {
         filterOnUserId = parseInt(forAnvandareId);
     } else if (ansvarigIdQuery) {
         filterOnUserId = parseInt(ansvarigIdQuery);
-    } else if (currentUserRole === AnvandareRoll.TEKNIKER) {
+    } else if (currentUserRole === AnvandareRoll.TEKNIKER && !fetchHistorik) { // Tekniker ser bara sina egna kommande, om inte historik efterfrågas brett
         filterOnUserId = currentUserId;
     }
     if (filterOnUserId !== null && isNaN(filterOnUserId)) { 
         filterOnUserId = null; 
     }
     
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const today = new Date(); // Används för historik-logik
+    // today.setHours(0, 0, 0, 0); // Används inte längre för dagens början i kommande
 
     if (fetchHistorik) { 
         orderBy = { datumTid: 'desc' };
+        const historyBaseTime = new Date(); // Referenstid för "mindre än"
+        historyBaseTime.setHours(0,0,0,0); // Starten på dagen för jämförelse för lt
+
         const historyConditions: Prisma.KalenderWhereInput = {
             OR: [
-                { slutDatumTid: { lt: today } },
-                { arbetsorder: { status: { in: [ArbetsorderStatus.OFFERT, ArbetsorderStatus.SLUTFORD, ArbetsorderStatus.FAKTURERAD, ArbetsorderStatus.AVBRUTEN] } } }
+                { slutDatumTid: { lt: historyBaseTime } }, // Händelser som slutade *före* idag
+                { 
+                  arbetsorder: { 
+                    status: { in: [
+                        ArbetsorderStatus.OFFERT, 
+                        ArbetsorderStatus.SLUTFORD, 
+                        ArbetsorderStatus.FAKTURERAD, 
+                        ArbetsorderStatus.AVBRUTEN 
+                    ]} 
+                  } 
+                },
+                { 
+                    motestyp: MotesTyp.ARBETSORDER,
+                    hanteradAvAdmin: true,
+                    arbetsorder: {
+                        status: ArbetsorderStatus.MATNING
+                    }
+                }
             ]
         };
         
@@ -62,36 +86,62 @@ export async function GET(req: NextRequest) {
         }
 
         if (!visaHanterade && (currentUserRole === AnvandareRoll.ADMIN || currentUserRole === AnvandareRoll.ARBETSLEDARE)) {
-            const hanteradFilter = { hanteradAvAdmin: false };
-            whereClause.AND = whereClause.AND ? 
-                              (Array.isArray(whereClause.AND) ? [...whereClause.AND, hanteradFilter] : [whereClause.AND, hanteradFilter]) : 
-                              [hanteradFilter];
+            const notStrictlyActionableAndHandled: Prisma.KalenderWhereInput = {
+                NOT: {
+                    AND: [
+                        { hanteradAvAdmin: true },
+                        {
+                            OR: [
+                                { arbetsorder: { status: { notIn: [ArbetsorderStatus.OFFERT, ArbetsorderStatus.SLUTFORD, ArbetsorderStatus.MATNING] } } },
+                                { arbetsorderId: null } 
+                            ]
+                        }
+                    ]
+                }
+            };
+             if (whereClause.AND && Array.isArray(whereClause.AND)) {
+                whereClause.AND.push(notStrictlyActionableAndHandled);
+            } else if (whereClause.AND) {
+                whereClause.AND = [whereClause.AND, notStrictlyActionableAndHandled];
+            } else {
+                 whereClause.AND = [notStrictlyActionableAndHandled];
+            }
         }
-    } else { // Logik för KOMMANDE händelser
+
+
+    } else { // Logik för KOMMANDE händelser (Dashboard: KommandeAktiviteter, KalenderVy: standard)
         orderBy = { datumTid: 'asc' };
-        
-        // Grundvillkor som ALLTID ska gälla för kommande händelser
+        const now = new Date(); // Nuvarande tidpunkt för strikt framtidsfiltrering
+
         const baseUpcomingConditions: Prisma.KalenderWhereInput[] = [
-            { slutDatumTid: { gte: today } },
-            { hanteradAvAdmin: false },
+            { slutDatumTid: { gte: now } }, // **ÄNDRING HÄR: Endast de vars sluttid är nu eller i framtiden**
+            { hanteradAvAdmin: false }, 
             { 
                 OR: [ 
-                    { arbetsorderId: null },
+                    { arbetsorderId: null }, 
                     { arbetsorder: { status: { in: [ArbetsorderStatus.MATNING, ArbetsorderStatus.AKTIV] } } } 
                 ]
             }
         ];
         
-        if (filterOnUserId !== null) { // Om vi filtrerar på en specifik användare
+        if (filterOnUserId !== null) { 
              whereClause.AND = [
                 { OR: [ { ansvarigId: filterOnUserId }, { medarbetare: { some: { anvandareId: filterOnUserId } } } ] },
-                ...baseUpcomingConditions // Sprid ut de grundläggande villkoren här
+                ...baseUpcomingConditions
             ];
-        } else { // Ingen specifik användare (Admin/AL ser ALLA kommande, fortfarande med strikt statusfilter)
+        } else if (currentUserRole === AnvandareRoll.TEKNIKER) {
+            // Om ingen specifik `forAnvandareId` eller `ansvarigIdQuery` är satt, och det är en tekniker,
+            // visa bara deras egna kommande (fallback om `filterOnUserId` inte sattes ovan)
+             whereClause.AND = [
+                { OR: [ { ansvarigId: currentUserId }, { medarbetare: { some: { anvandareId: currentUserId } } } ] },
+                ...baseUpcomingConditions
+            ];
+        }
+        else { // Admin/AL ser allt kommande om inget filter är satt
             whereClause.AND = baseUpcomingConditions;
         }
 
-        // Lägg till datumintervall om det är huvudkalendern (inte specifik dashboard-hämtning) och datum är specificerade
+        // Om KalenderVy skickar med start/end för sin visning
         if (startDateQuery && endDateQuery) {
             const dateRangeCondition: Prisma.KalenderWhereInput = {
                 OR: [
@@ -100,13 +150,12 @@ export async function GET(req: NextRequest) {
                     { AND: [{ datumTid: { lt: new Date(startDateQuery) } }, { slutDatumTid: { gt: new Date(endDateQuery) } }] }
                 ]
             };
-            // Säkerställ att AND-arrayen är korrekt hanterad
             if (whereClause.AND && Array.isArray(whereClause.AND)) {
                 whereClause.AND.push(dateRangeCondition);
-            } else if (whereClause.AND) { // Om whereClause.AND är ett objekt, gör om det till en array
-                whereClause.AND = [whereClause.AND, dateRangeCondition];
-            } else { // Om whereClause.AND är odefinierat
-                whereClause.AND = [dateRangeCondition];
+            } else if (whereClause.AND) { // Om whereClause.AND redan är ett objekt
+                whereClause.AND = [whereClause.AND as Prisma.KalenderWhereInput, dateRangeCondition];
+            } else { // Om whereClause.AND är tomt/odefinierat
+                 whereClause.AND = [dateRangeCondition];
             }
         }
     }
@@ -120,7 +169,7 @@ export async function GET(req: NextRequest) {
         medarbetare: { include: { anvandare: { select: { id: true, fornamn: true, efternamn: true } } } },
       },
       orderBy, 
-      take: fetchHistorik ? 50 : undefined, 
+      take: fetchHistorik ? 100 : undefined, 
     });
 
     return NextResponse.json(kalenderHandelser);
@@ -197,7 +246,7 @@ export async function POST(req: NextRequest) {
     if (finalArbetsorderId) {
       const arbetsorder = await prisma.arbetsorder.findUnique({ where: { id: finalArbetsorderId }});
       if (!arbetsorder) return NextResponse.json({ error: 'Arbetsordern hittades inte' }, { status: 400 });
-      if (!finalKundId && arbetsorder.kundId) finalKundId = arbetsorder.kundId;
+      if (!finalKundId && arbetsorder.kundId) finalKundId = arbetsorder.kundId; // Sätt kundId från AO om det saknas
     }
     
     const medarbetareData = medarbetareIds.map((id: string | number) => ({
@@ -215,6 +264,7 @@ export async function POST(req: NextRequest) {
         ...(finalKundId && { kund: { connect: { id: finalKundId } } }),
         ...(finalArbetsorderId && { arbetsorder: { connect: { id: finalArbetsorderId } } }),
         ...(medarbetareData.length > 0 && { medarbetare: { create: medarbetareData } }),
+        hanteradAvAdmin: false, 
       },
       include: {
         kund: { include: { privatperson: true, foretag: true } },
@@ -237,3 +287,4 @@ export async function POST(req: NextRequest) {
     );
   }
 }
+// --- end diff ---

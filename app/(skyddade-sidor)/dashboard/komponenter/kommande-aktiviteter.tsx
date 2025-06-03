@@ -1,5 +1,4 @@
 // File: app/(skyddade-sidor)/dashboard/komponenter/kommande-aktiviteter.tsx
-// Fullständig kod
 'use client';
 
 import { useEffect, useState, useCallback, useMemo } from 'react'; 
@@ -8,7 +7,7 @@ import { toast } from 'sonner';
 import { KalenderHandelse } from '@/app/(skyddade-sidor)/kalender/page'; 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Loader2, CalendarDays, Clock, User, Briefcase, MapPin, Phone, ExternalLink, Info, CheckCircle2, Construction, ClipboardCheck, CalendarPlus } from 'lucide-react'; 
+import { Loader2, CalendarDays, Clock, User, Briefcase, MapPin, Phone, ExternalLink, Info, CheckCircle2, Construction, ClipboardCheck, CalendarPlus, UserX } from 'lucide-react'; 
 import { format, parseISO, isSameDay } from 'date-fns';
 import { sv } from 'date-fns/locale';
 import Link from 'next/link';
@@ -26,6 +25,11 @@ interface ObokadArbetsorderData extends Pick<PrismaArbetsorder, 'id' | 'referens
         privatperson?: { fornamn: string; efternamn: string } | null;
         foretag?: { foretagsnamn: string } | null;
     };
+    ansvarigTekniker?: {
+        id: number;
+        fornamn: string;
+        efternamn: string;
+    } | null;
 }
 
 interface AnstalldForKommande {
@@ -106,11 +110,14 @@ export default function KommandeAktiviteter({ onActivityHandled, anstallda, load
   const { data: session } = useSession();
   const router = useRouter();
   const [bokadeAktiviteter, setBokadeAktiviteter] = useState<KalenderEventData[]>([]);
-  const [obokadeOrdrar, setObokadeOrdrar] = useState<ObokadArbetsorderData[]>([]);
+  const [obokadeJobbMedAnsvarig, setObokadeJobbMedAnsvarig] = useState<ObokadArbetsorderData[]>([]);
+  const [otilldeladeAktivaJobb, setOtilldeladeAktivaJobb] = useState<ObokadArbetsorderData[]>([]);
   const [loadingBokade, setLoadingBokade] = useState(true);
-  const [loadingObokade, setLoadingObokade] = useState(true);
+  const [loadingObokadeMedAnsvarig, setLoadingObokadeMedAnsvarig] = useState(true);
+  const [loadingOtilldeladeAktiva, setLoadingOtilldeladeAktiva] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [updatingStatusId, setUpdatingStatusId] = useState<number | null>(null);
+  const [handlingEventId, setHandlingEventId] = useState<number | null>(null);
 
   const isAdminOrArbetsledare = useMemo(() => 
     session?.user?.role === AnvandareRoll.ADMIN || session?.user?.role === AnvandareRoll.ARBETSLEDARE,
@@ -120,11 +127,10 @@ export default function KommandeAktiviteter({ onActivityHandled, anstallda, load
     setLoadingBokade(true);
     setError(null);
     try {
-      let url = '/api/kalender?historik=false'; // fetchHistorik=false är redan satt
+      let url = '/api/kalender?historik=false'; 
       if (session?.user?.id && !isAdminOrArbetsledare) { 
         url += `&forAnvandareId=${session.user.id}`;
       }
-      // För Admin/AL hämtas alla kommande (API:et filtrerar bort de som är kopplade till slutförda/fakturerade/avbrutna AO)
       const response = await fetch(url);
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ error: 'Kunde inte hämta bokade aktiviteter' }));
@@ -140,57 +146,83 @@ export default function KommandeAktiviteter({ onActivityHandled, anstallda, load
     }
   }, [session, isAdminOrArbetsledare]);
 
-  const fetchObokadeJobb = useCallback(async () => {
-    setLoadingObokade(true);
+  const fetchObokadeJobbTilldelade = useCallback(async () => {
+    setLoadingObokadeMedAnsvarig(true);
     setError(null);
     try {
       let url = '/api/arbetsordrar?';
-      
-      // Statusar som räknas som "aktiva" jobb som kan behöva bokas
-      const teknikerRelevantaStatusar = `${ArbetsorderStatus.MATNING},${ArbetsorderStatus.AKTIV}`;
-      // Admin/AL kan vilja se även de som är i offertstadiet som "obokade" ifall de behöver följas upp eller bokas för produktion
-      const adminRelevantaStatusar = `${ArbetsorderStatus.MATNING},${ArbetsorderStatus.OFFERT},${ArbetsorderStatus.AKTIV}`;
+      const statusFilter = `${ArbetsorderStatus.MATNING},${ArbetsorderStatus.AKTIV}`;
 
-      if (session?.user?.id && !isAdminOrArbetsledare) { // Tekniker
-        url += `ansvarigForObokadeId=${session.user.id}&status=${teknikerRelevantaStatusar}`;
-      } else if (isAdminOrArbetsledare) { // Admin/Arbetsledare
-        url += `allAssignedButUnbooked=true&status=${adminRelevantaStatusar}`;
+      if (session?.user?.id && !isAdminOrArbetsledare) {
+        url += `ansvarigForObokadeId=${session.user.id}&status=${statusFilter}`;
+      } else if (isAdminOrArbetsledare) {
+        url += `allAssignedButUnbooked=true&status=${statusFilter}`;
       } else { 
-        setObokadeOrdrar([]);
-        setLoadingObokade(false);
+        setObokadeJobbMedAnsvarig([]);
+        setLoadingObokadeMedAnsvarig(false);
         return;
       }
       
       const response = await fetch(url);
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Kunde inte hämta obokade ordrar' }));
-        throw new Error(errorData.error || 'Kunde inte hämta obokade ordrar');
+        const errorData = await response.json().catch(() => ({ error: 'Kunde inte hämta obokade tilldelade ordrar' }));
+        throw new Error(errorData.error || 'Kunde inte hämta obokade tilldelade ordrar');
       }
       const data = await response.json();
-      setObokadeOrdrar(data.arbetsordrar || []);
+      setObokadeJobbMedAnsvarig(data.arbetsordrar || []);
     } catch (err: any) {
-      console.error("Fel vid hämtning av obokade ordrar:", err);
-      setError(prevError => prevError || err.message || 'Ett fel uppstod vid hämtning av obokade ordrar.');
+      console.error("Fel vid hämtning av obokade tilldelade ordrar:", err);
+      setError(prevError => prevError || err.message || 'Ett fel uppstod vid hämtning av obokade tilldelade ordrar.');
     } finally {
-      setLoadingObokade(false);
+      setLoadingObokadeMedAnsvarig(false);
     }
   }, [session, isAdminOrArbetsledare]);
+
+  const fetchOtilldeladeAktivaJobb = useCallback(async () => {
+    if (!isAdminOrArbetsledare) {
+        setOtilldeladeAktivaJobb([]);
+        setLoadingOtilldeladeAktiva(false);
+        return;
+    }
+    setLoadingOtilldeladeAktiva(true);
+    setError(null);
+    try {
+        const url = '/api/arbetsordrar?otilldeladeAktiva=true';
+        const response = await fetch(url);
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ error: 'Kunde inte hämta otilldelade aktiva jobb' }));
+            throw new Error(errorData.error || 'Kunde inte hämta otilldelade aktiva jobb');
+        }
+        const data = await response.json();
+        setOtilldeladeAktivaJobb(data.arbetsordrar || []);
+    } catch (err: any) {
+        console.error("Fel vid hämtning av otilldelade aktiva jobb:", err);
+        setError(prevError => prevError || err.message || 'Ett fel uppstod vid hämtning av otilldelade aktiva jobb.');
+    } finally {
+        setLoadingOtilldeladeAktiva(false);
+    }
+  }, [isAdminOrArbetsledare]);
 
 
   useEffect(() => {
     if (session && session.user && session.user.id) {
       setError(null); 
       fetchBokadeAktiviteter(); 
-      fetchObokadeJobb();
+      fetchObokadeJobbTilldelade();
+      if (isAdminOrArbetsledare) {
+        fetchOtilldeladeAktivaJobb();
+      }
     } else if (session === null) { 
       setLoadingBokade(false);
-      setLoadingObokade(false);
+      setLoadingObokadeMedAnsvarig(false);
+      setLoadingOtilldeladeAktiva(false);
       setBokadeAktiviteter([]);
-      setObokadeOrdrar([]);
+      setObokadeJobbMedAnsvarig([]);
+      setOtilldeladeAktivaJobb([]);
     }
-  }, [session, fetchBokadeAktiviteter, fetchObokadeJobb, onActivityHandled]); 
+  }, [session, fetchBokadeAktiviteter, fetchObokadeJobbTilldelade, fetchOtilldeladeAktivaJobb, isAdminOrArbetsledare, onActivityHandled]); 
 
-  const handleStatusUpdate = async (arbetsorderId: number, nyStatus: ArbetsorderStatus, successMessage: string) => {
+  const handleArbetsorderStatusUpdate = async (arbetsorderId: number, nyStatus: ArbetsorderStatus, successMessage: string) => {
     setUpdatingStatusId(arbetsorderId);
     try {
       const response = await fetch(`/api/arbetsordrar/${arbetsorderId}/status`, {
@@ -214,45 +246,66 @@ export default function KommandeAktiviteter({ onActivityHandled, anstallda, load
       setUpdatingStatusId(null);
     }
   };
+
+  const handleMarkKalenderEventAsHandled = async (kalenderEventId: number, arbetsorderIdForMsg: number | null) => {
+    setHandlingEventId(kalenderEventId);
+    
+    const previousBokadeAktiviteter = [...bokadeAktiviteter];
+    setBokadeAktiviteter(prev => prev.filter(akt => akt.id !== kalenderEventId));
+
+    try {
+      const response = await fetch(`/api/kalender/${kalenderEventId}/hantera`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        setBokadeAktiviteter(previousBokadeAktiviteter);
+        throw new Error(errorData.error || `Kunde inte markera mätningen som utförd.`);
+      }
+      toast.success(`Mätning ${arbetsorderIdForMsg ? `för AO #${arbetsorderIdForMsg} ` : ''}markerad som utförd.`);
+      onActivityHandled(); 
+    } catch (error: any) {
+      toast.error(error.message);
+      console.error("Fel vid markering av mätning som utförd:", error);
+      const stillExists = bokadeAktiviteter.some(akt => akt.id === kalenderEventId);
+      if (!stillExists) {
+        setBokadeAktiviteter(previousBokadeAktiviteter);
+      }
+    } finally {
+      setHandlingEventId(null);
+    }
+  };
   
-  const handleBokaTidClick = (arbetsorderId: number) => {
-    const ao = obokadeOrdrar.find(o => o.id === arbetsorderId);
-    const ansvarigForAO = ao?.ansvarigTeknikerId?.toString();
-    const ansvarigAttForifylla = ansvarigForAO || session?.user?.id;
+  const handleBokaTidClick = (arbetsorderId: number, ansvarigId?: number | string | null) => {
+    // const ao = obokadeJobbMedAnsvarig.find(o => o.id === arbetsorderId) || otilldeladeAktivaJobb.find(o => o.id === arbetsorderId);
+    // const ansvarigForAO = ansvarigId?.toString() || ao?.ansvarigTeknikerId?.toString();
+    // const ansvarigAttForifylla = ansvarigForAO || session?.user?.id;
+    let ao: ObokadArbetsorderData | undefined;
+    let ansvarigForAO: string | undefined;
+
+    if (ansvarigId) { // Om ett ansvarigId skickas med, använd det
+        ansvarigForAO = ansvarigId.toString();
+    } else { // Annars, försök hitta AO i listorna för att se om den har en ansvarig
+        ao = obokadeJobbMedAnsvarig.find(o => o.id === arbetsorderId) || otilldeladeAktivaJobb.find(o => o.id === arbetsorderId);
+        ansvarigForAO = ao?.ansvarigTeknikerId?.toString();
+    }
+    const ansvarigAttForifylla = ansvarigForAO || session?.user?.id?.toString();
+
 
     router.push(`/kalender?nyHandelseForAO=${arbetsorderId}${ansvarigAttForifylla ? `&ansvarig=${ansvarigAttForifylla}` : ''}`);
     toast.info("Förifyller ny kalenderhändelse...");
   };
 
-  const isLoading = loadingBokade || loadingObokade || loadingAnstallda;
+  const isLoading = loadingBokade || loadingObokadeMedAnsvarig || loadingAnstallda || (isAdminOrArbetsledare && loadingOtilldeladeAktiva);
 
-  const faktiskaObokadeOrdrar = useMemo(() => {
-    return obokadeOrdrar.filter(obokadAo => {
-      // En AO är "obokad" om det INTE finns en bokad aktivitet för just den AO:n
-      // där den som är ansvarig för AO:n också är ansvarig för kalenderhändelsen
-      // OCH kalenderhändelsen är i framtiden.
-      const isBookedForItsAssignedTechnicianAndUpcoming = bokadeAktiviteter.some(
-        bokadEvent => {
-            const eventSlutDatum = parseISO(bokadEvent.slutDatumTid);
-            const today = new Date(); // Jämför med nuvarande tidpunkt
-            // today.setHours(0,0,0,0); // Om man bara vill kolla datum, inte tid
-
-            return bokadEvent.arbetsorderId === obokadAo.id &&
-                   bokadEvent.ansvarigId === obokadAo.ansvarigTeknikerId &&
-                   eventSlutDatum >= today; // Händelsen ska inte ha passerat
-        }
-      );
-      // En tekniker ska inte se "obokade" jobb som är i offertstadiet
-      if (!isAdminOrArbetsledare && obokadAo.status === ArbetsorderStatus.OFFERT) {
-          return false;
-      }
-      return !isBookedForItsAssignedTechnicianAndUpcoming;
-    });
-  }, [obokadeOrdrar, bokadeAktiviteter, isAdminOrArbetsledare]);
+  const harIngaDataAttVisa = bokadeAktiviteter.length === 0 && 
+                            obokadeJobbMedAnsvarig.length === 0 && 
+                            (!isAdminOrArbetsledare || otilldeladeAktivaJobb.length === 0);
 
   const cardTitle = isAdminOrArbetsledare ? "Alla Aktiviteter & Jobb" : "Dina Aktiviteter & Jobb";
 
-  if (isLoading && bokadeAktiviteter.length === 0 && faktiskaObokadeOrdrar.length === 0) {
+  if (isLoading && harIngaDataAttVisa) {
     return (
       <Card>
         <CardHeader><CardTitle className="flex items-center"><CalendarDays className="mr-2 h-5 w-5" /> {cardTitle}</CardTitle></CardHeader>
@@ -263,7 +316,7 @@ export default function KommandeAktiviteter({ onActivityHandled, anstallda, load
     );
   }
 
-  if (error && bokadeAktiviteter.length === 0 && faktiskaObokadeOrdrar.length === 0) {
+  if (error && harIngaDataAttVisa) {
      return (
       <Card>
         <CardHeader><CardTitle className="flex items-center"><CalendarDays className="mr-2 h-5 w-5" /> {cardTitle}</CardTitle></CardHeader>
@@ -276,12 +329,12 @@ export default function KommandeAktiviteter({ onActivityHandled, anstallda, load
     <Card>
       <CardHeader><CardTitle className="flex items-center"><CalendarDays className="mr-2 h-5 w-5" /> {cardTitle}</CardTitle></CardHeader>
       <CardContent>
-        {(bokadeAktiviteter.length === 0 && faktiskaObokadeOrdrar.length === 0) ? (
+        {(harIngaDataAttVisa && !isLoading) ? (
           <p className="text-muted-foreground">Du har inga kommande aktiviteter eller obokade jobb som matchar din roll/filter.</p>
         ) : (
           <ScrollArea className="h-[calc(24rem+10rem)]"> 
             <div className="space-y-4 pr-3">
-              {/* Först, renderera bokade aktiviteter */}
+              {/* 1. Bokade Aktiviteter */}
               {bokadeAktiviteter.map((akt) => {
                 const arbetsorder = akt.arbetsorder;
                 let actionButton = null;
@@ -293,9 +346,9 @@ export default function KommandeAktiviteter({ onActivityHandled, anstallda, load
 
                 if (arbetsorder && canTakeAction) {
                   if (arbetsorder.status === ArbetsorderStatus.MATNING) {
-                    actionButton = ( <Button size="sm" variant="outline" className="border-blue-500 text-blue-600 hover:bg-blue-50 hover:text-blue-700 dark:border-blue-400 dark:text-blue-300 dark:hover:bg-blue-900/50 dark:hover:text-blue-200" onClick={() => handleStatusUpdate(arbetsorder.id, ArbetsorderStatus.OFFERT, `Mätning för AO #${arbetsorder.id} markerad som utförd.`)} disabled={updatingStatusId === arbetsorder.id} > {updatingStatusId === arbetsorder.id ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <ClipboardCheck className="mr-1.5 h-4 w-4" />} Mätning Utförd </Button> );
+                    actionButton = ( <Button size="sm" variant="outline" className="border-blue-500 text-blue-600 hover:bg-blue-50 hover:text-blue-700 dark:border-blue-400 dark:text-blue-300 dark:hover:bg-blue-900/50 dark:hover:text-blue-200" onClick={() => handleMarkKalenderEventAsHandled(akt.id, arbetsorder.id)} disabled={handlingEventId === akt.id} > {handlingEventId === akt.id ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <ClipboardCheck className="mr-1.5 h-4 w-4" />} Mätning Utförd </Button> );
                   } else if (arbetsorder.status === ArbetsorderStatus.AKTIV) {
-                    actionButton = ( <Button size="sm" variant="outline" className="border-green-500 text-green-600 hover:bg-green-50 hover:text-green-700 dark:border-green-400 dark:text-green-300 dark:hover:bg-green-900/50 dark:hover:text-green-200" onClick={() => handleStatusUpdate(arbetsorder.id, ArbetsorderStatus.SLUTFORD, `Arbetsorder #${arbetsorder.id} markerad som slutförd.`)} disabled={updatingStatusId === arbetsorder.id} > {updatingStatusId === arbetsorder.id ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-1.5 h-4 w-4" />} Slutför Order </Button> );
+                    actionButton = ( <Button size="sm" variant="outline" className="border-green-500 text-green-600 hover:bg-green-50 hover:text-green-700 dark:border-green-400 dark:text-green-300 dark:hover:bg-green-900/50 dark:hover:text-green-200" onClick={() => handleArbetsorderStatusUpdate(arbetsorder.id, ArbetsorderStatus.SLUTFORD, `Arbetsorder #${arbetsorder.id} markerad som slutförd.`)} disabled={updatingStatusId === arbetsorder.id} > {updatingStatusId === arbetsorder.id ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-1.5 h-4 w-4" />} Slutför Order </Button> );
                   }
                 }
 
@@ -316,21 +369,22 @@ export default function KommandeAktiviteter({ onActivityHandled, anstallda, load
                 );
               })}
 
-              {faktiskaObokadeOrdrar.length > 0 && bokadeAktiviteter.length > 0 && (
+              {/* 2. Obokade Jobb MED Ansvarig */}
+              {obokadeJobbMedAnsvarig.length > 0 && (
                 <div className="my-6 border-t pt-6">
                     <h4 className="text-sm font-medium text-muted-foreground mb-3 text-center">
-                        {isAdminOrArbetsledare ? "Alla Tilldelade, Obokade Jobb" : "Dina Obokade Tilldelade Jobb"}
+                        {isAdminOrArbetsledare ? "Tilldelade Obokade Jobb" : "Dina Obokade Tilldelade Jobb"}
                     </h4>
                 </div>
               )}
-              {faktiskaObokadeOrdrar.map((ao) => (
-                <div key={`ao-${ao.id}`} className="p-4 border rounded-lg shadow-sm bg-amber-50 dark:bg-amber-900/30 hover:shadow-md transition-shadow">
+              {obokadeJobbMedAnsvarig.map((ao) => (
+                <div key={`obokad-tilldelad-${ao.id}`} className="p-4 border rounded-lg shadow-sm bg-amber-50 dark:bg-amber-900/30 hover:shadow-md transition-shadow">
                    <h3 className="font-semibold text-md mb-1">
                      {getArbetsorderDisplayTitle(ao)}
                      <span className={`ml-2 text-xs font-normal px-1.5 py-0.5 rounded-full border ${ ao.status === ArbetsorderStatus.MATNING ? 'bg-orange-100 text-orange-700 border-orange-300 dark:bg-orange-800/30 dark:text-orange-300 dark:border-orange-700' : ao.status === ArbetsorderStatus.OFFERT ? 'bg-yellow-100 text-yellow-700 border-yellow-300 dark:bg-yellow-800/30 dark:text-yellow-300 dark:border-yellow-700' : 'bg-blue-100 text-blue-700 border-blue-300 dark:bg-blue-800/30 dark:text-blue-300 dark:border-blue-700'}`}>{getArbetsorderStatusText(ao.status)}</span>
-                     {isAdminOrArbetsledare && ao.ansvarigTeknikerId && (
+                     {isAdminOrArbetsledare && ao.ansvarigTeknikerId && ao.ansvarigTekniker && (
                         <span className="ml-2 text-xs italic text-muted-foreground">
-                            (Tilldelad: { anstallda.find((a: AnstalldForKommande) => a.id === ao.ansvarigTeknikerId)?.fornamn } { anstallda.find((a: AnstalldForKommande) => a.id === ao.ansvarigTeknikerId)?.efternamn || `Tekniker #${ao.ansvarigTeknikerId}`})
+                            (Tilldelad: { ao.ansvarigTekniker.fornamn } { ao.ansvarigTekniker.efternamn })
                         </span>
                      )}
                    </h3>
@@ -345,12 +399,52 @@ export default function KommandeAktiviteter({ onActivityHandled, anstallda, load
                             Visa Order <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
                             </Button>
                         </Link>
-                        <Button size="sm" variant="default" onClick={() => handleBokaTidClick(ao.id)}>
+                        <Button size="sm" variant="default" onClick={() => handleBokaTidClick(ao.id, ao.ansvarigTeknikerId)}>
                            <CalendarPlus className="mr-1.5 h-4 w-4" /> Boka tid
                         </Button>
                     </div>
                 </div>
               ))}
+
+              {/* 3. Otilldelade Aktiva Jobb (endast Admin/AL) */}
+              {isAdminOrArbetsledare && otilldeladeAktivaJobb.length > 0 && (
+                <>
+                  {(bokadeAktiviteter.length > 0 || obokadeJobbMedAnsvarig.length > 0 || !harIngaDataAttVisa ) && ( 
+                    <div className="my-6 border-t pt-6">
+                      <h4 className="text-sm font-medium text-muted-foreground mb-3 text-center flex items-center justify-center">
+                        <UserX className="mr-2 h-4 w-4 text-destructive" /> Otilldelade Aktiva Jobb
+                      </h4>
+                    </div>
+                  )}
+                  {otilldeladeAktivaJobb.map((ao) => (
+                    <div key={`otilldelad-aktiv-${ao.id}`} className="p-4 border rounded-lg shadow-sm bg-red-50 dark:bg-red-900/20 hover:shadow-md transition-shadow">
+                      <h3 className="font-semibold text-md mb-1">
+                        {getArbetsorderDisplayTitle(ao)}
+                        <span className={`ml-2 text-xs font-normal px-1.5 py-0.5 rounded-full border bg-blue-100 text-blue-700 border-blue-300 dark:bg-blue-800/30 dark:text-blue-300 dark:border-blue-700`}>{getArbetsorderStatusText(ao.status)}</span>
+                        <span className="ml-2 text-xs italic text-destructive/80">(Ingen ansvarig)</span>
+                      </h3>
+                      <div className="mt-2 pt-2 border-t border-dashed dark:border-slate-700">
+                        <p className="text-sm flex items-center mt-1"> <User className="mr-1.5 h-4 w-4 text-primary" /> <Link href={`/kunder/${ao.kund.id}`} className="hover:underline text-primary font-medium">{getKundNamn(ao.kund)}</Link> </p>
+                        {ao.kund.telefonnummer && ( <p className="text-xs text-muted-foreground flex items-center mt-1"><Phone className="mr-1.5 h-3 w-3" /> {ao.kund.telefonnummer}</p> )}
+                        {ao.kund.adress && ( <p className="text-xs text-muted-foreground flex items-center mt-1"><MapPin className="mr-1.5 h-3 w-3" /> {ao.kund.adress}</p> )}
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2 justify-end items-center">
+                        <Link href={`/arbetsordrar/${ao.id}`}>
+                          <Button size="sm" variant="ghost" className="text-muted-foreground hover:text-primary">
+                            Visa Order <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
+                          </Button>
+                        </Link>
+                        <Button size="sm" variant="outline" className="border-destructive/50 text-destructive/90 hover:bg-destructive/10 hover:text-destructive" onClick={() => router.push(`/arbetsordrar/${ao.id}/redigera`)}>
+                           Tilldela Ansvarig
+                        </Button>
+                        <Button size="sm" variant="default" onClick={() => handleBokaTidClick(ao.id, null)}>
+                          <CalendarPlus className="mr-1.5 h-4 w-4" /> Boka tid
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </>
+              )}
             </div>
           </ScrollArea>
         )}

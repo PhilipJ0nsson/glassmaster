@@ -1,3 +1,8 @@
+// File: app/api/anvandare/route.ts
+// Mode: Modifying
+// Change: Added a query parameter `forScheduling` to allow fetching all relevant users for calendar selection, regardless of the requester's role (within limits).
+// Reasoning: To enable Tekniker to select other anställda when creating/editing calendar events.
+// --- start diff ---
 import { prisma } from '@/lib/prisma';
 import { AnvandareRoll } from '@prisma/client';
 import { getServerSession } from 'next-auth';
@@ -17,14 +22,44 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Hämta query-parametrar
     const { searchParams } = new URL(req.url);
     const includeInaktiva = searchParams.get('includeInaktiva') === 'true';
     const search = searchParams.get('search') || '';
+    const forScheduling = searchParams.get('forScheduling') === 'true'; // Ny parameter
 
-    // Kontrollera behörighet - endast administratörer och arbetsledare ska kunna se alla användare
+    // Om det är för schemaläggning, vill vi oftast ha alla aktiva tekniker och arbetsledare
+    if (forScheduling) {
+      const schedulableUsers = await prisma.anvandare.findMany({
+        where: {
+          aktiv: true,
+          // Man kan lägga till rollfilter här om man bara vill kunna schemalägga vissa roller
+          // OR: [
+          //   { roll: AnvandareRoll.TEKNIKER },
+          //   { roll: AnvandareRoll.ARBETSLEDARE },
+          // ],
+          ...(search && { // Lägg till sökning även här om det behövs
+            OR: [
+              { fornamn: { contains: search, mode: 'insensitive' } },
+              { efternamn: { contains: search, mode: 'insensitive' } },
+              { epost: { contains: search, mode: 'insensitive' } },
+              { anvandarnamn: { contains: search, mode: 'insensitive' } },
+            ],
+          }),
+        },
+        select: {
+          id: true,
+          fornamn: true,
+          efternamn: true,
+          epost: true, // Kan vara bra för info
+          roll: true, // Kan vara bra för info
+        },
+        orderBy: { fornamn: 'asc' }
+      });
+      return NextResponse.json({ anvandare: schedulableUsers });
+    }
+
+    // Befintlig logik för andra fall (t.ex. användarlistan i inställningar)
     if (session.user.role !== AnvandareRoll.ADMIN && session.user.role !== AnvandareRoll.ARBETSLEDARE) {
-      // För tekniker, returnera bara deras egen information
       const anvandare = await prisma.anvandare.findUnique({
         where: { id: parseInt(session.user.id as string) },
         select: {
@@ -38,19 +73,13 @@ export async function GET(req: NextRequest) {
           anvandarnamn: true,
         }
       });
-
       return NextResponse.json({ anvandare: anvandare ? [anvandare] : [] });
     }
 
-    // Bygg filterkriterier
     const filter: any = {};
-    
-    // Inkludera inaktiva användare endast om includeInaktiva är true
     if (!includeInaktiva) {
       filter.aktiv = true;
     }
-
-    // Lägg till sökning om det finns
     if (search) {
       filter.OR = [
         { fornamn: { contains: search, mode: 'insensitive' } },
@@ -60,7 +89,6 @@ export async function GET(req: NextRequest) {
       ];
     }
 
-    // För admin och arbetsledare, hämta alla användare baserat på filter
     const anvandare = await prisma.anvandare.findMany({
       where: filter,
       select: {
@@ -75,9 +103,7 @@ export async function GET(req: NextRequest) {
         skapadDatum: true,
         uppdateradDatum: true,
       },
-      orderBy: {
-        fornamn: 'asc',
-      }
+      orderBy: { fornamn: 'asc' }
     });
 
     return NextResponse.json({ anvandare });
@@ -103,7 +129,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Kontrollera behörighet - endast administratörer får skapa nya användare
     if (session.user.role !== AnvandareRoll.ADMIN) {
       return NextResponse.json(
         { error: 'Behörighet saknas' },
@@ -122,7 +147,6 @@ export async function POST(req: NextRequest) {
       losenord 
     } = body;
 
-    // Validera nödvändiga fält
     if (!fornamn || !efternamn || !epost || !anvandarnamn || !losenord) {
       return NextResponse.json(
         { error: 'Alla obligatoriska fält måste fyllas i' },
@@ -130,7 +154,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Kontrollera om e-post eller användarnamn redan används
     const anvandareExists = await prisma.anvandare.findFirst({
       where: {
         OR: [
@@ -154,10 +177,8 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Kryptera lösenord
     const hashedPassword = await bcrypt.hash(losenord, 10);
 
-    // Skapa ny användare
     const nyAnvandare = await prisma.anvandare.create({
       data: {
         fornamn,
@@ -192,3 +213,4 @@ export async function POST(req: NextRequest) {
     );
   }
 }
+// --- end diff ---

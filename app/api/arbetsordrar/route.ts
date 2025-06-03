@@ -1,8 +1,7 @@
 // File: app/api/arbetsordrar/route.ts
-// Justering i GET-funktionen
 
 import { prisma } from '@/lib/prisma';
-import { ArbetsorderStatus, Prisma } from '@prisma/client'; 
+import { ArbetsorderStatus, Prisma, MotesTyp } from '@prisma/client'; 
 import { getServerSession } from 'next-auth';
 import { NextRequest, NextResponse } from 'next/server';
 import { authOptions } from '@/app/api/auth/[...nextauth]/route';
@@ -12,10 +11,7 @@ export async function GET(req: NextRequest) {
     const session = await getServerSession(authOptions);
     
     if (!session?.user) {
-      return NextResponse.json(
-        { error: 'Inte autentiserad' },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: 'Inte autentiserad' }, { status: 401 });
     }
 
     const { searchParams } = new URL(req.url);
@@ -26,43 +22,138 @@ export async function GET(req: NextRequest) {
     const teknikerIdParam = searchParams.get('tekniker');
     const kundIdParam = searchParams.get('kundId');
     const otilldeladMatning = searchParams.get('otilldeladMatning') === 'true';
+    const otilldeladeAktiva = searchParams.get('otilldeladeAktiva') === 'true'; 
     const includeOrderraderParam = searchParams.get('includeOrderrader') === 'true';
     const ansvarigForObokadeIdParam = searchParams.get('ansvarigForObokadeId');
     const allAssignedButUnbookedParam = searchParams.get('allAssignedButUnbooked') === 'true';
 
-
     const skip = (page - 1) * pageSize;
     let whereInput: Prisma.ArbetsorderWhereInput = {};
+    let finalArbetsordrar: any[] = [];
+    let totalArbetsordrarCount = 0;
 
-    if (ansvarigForObokadeIdParam) {
-        const teknikerId = parseInt(ansvarigForObokadeIdParam);
-        if (!isNaN(teknikerId)) {
-            whereInput.ansvarigTeknikerId = teknikerId;
-            // Tekniker ska bara se sina MATNING och AKTIV som obokade
-            whereInput.status = { in: [ArbetsorderStatus.MATNING, ArbetsorderStatus.AKTIV] };
+    const standardIncludes = {
+        kund: { include: { privatperson: true, foretag: true } },
+        ansvarigTekniker: { select: { id: true, fornamn: true, efternamn: true } },
+        orderrader: includeOrderraderParam ? { include: { prislista: true } } : { select: { id: true } },
+        bilder: { select: { id: true } },
+        skapadAv: { select: { id: true, fornamn: true, efternamn: true } },
+    };
+
+    if (otilldeladMatning) {
+      const potentiellaOtilldeladeMatningar = await prisma.arbetsorder.findMany({
+          where: { 
+            status: ArbetsorderStatus.MATNING,
+            ansvarigTeknikerId: null 
+          },
+          include: { 
+              ...standardIncludes,
+              kalender: {
+                  select: { id: true, hanteradAvAdmin: true, slutDatumTid: true } 
+              }
+          },
+          orderBy: { skapadDatum: 'asc' },
+          take: 100, 
+      });
+
+      finalArbetsordrar = potentiellaOtilldeladeMatningar.filter(ao => {
+          const ärRedanHanteradEllerBokad = ao.kalender.some(k => k.hanteradAvAdmin || (!k.hanteradAvAdmin && k.slutDatumTid >= new Date()));
+          return !ärRedanHanteradEllerBokad;
+      }).map(ao => {
+          const { kalender, ...restenAvAo } = ao; 
+          return restenAvAo;
+      });
+      totalArbetsordrarCount = finalArbetsordrar.length;
+
+    } else if (otilldeladeAktiva) {
+        const potentiellaOtilldeladeAktiva = await prisma.arbetsorder.findMany({
+            where: {
+                status: ArbetsorderStatus.AKTIV,
+                ansvarigTeknikerId: null
+            },
+            include: {
+                ...standardIncludes,
+                kalender: {
+                    where: {
+                        hanteradAvAdmin: false,
+                        slutDatumTid: { gte: new Date() }
+                    },
+                    select: { id: true }
+                }
+            },
+            orderBy: { skapadDatum: 'asc' },
+            take: 100,
+        });
+        
+        finalArbetsordrar = potentiellaOtilldeladeAktiva.filter(ao => ao.kalender.length === 0).map(ao => {
+            const { kalender, ...restenAvAo } = ao;
+            return restenAvAo;
+        });
+        totalArbetsordrarCount = finalArbetsordrar.length;
+
+    } else if (ansvarigForObokadeIdParam || allAssignedButUnbookedParam) {
+        let teknikerIdForFilter: number | undefined = undefined;
+        if (ansvarigForObokadeIdParam) {
+            const parsedId = parseInt(ansvarigForObokadeIdParam);
+            if (!isNaN(parsedId)) teknikerIdForFilter = parsedId;
         }
-    } else if (allAssignedButUnbookedParam) {
-        whereInput.ansvarigTeknikerId = { not: null };
-        // Admin/AL ska också bara se MATNING och AKTIV som "jobb att boka"
-        whereInput.status = { in: [ArbetsorderStatus.MATNING, ArbetsorderStatus.AKTIV] };
-    } else if (otilldeladMatning) {
-      whereInput = { 
-        status: ArbetsorderStatus.MATNING,
-        ansvarigTeknikerId: null 
-      };
-      if (kundIdParam) whereInput.kundId = parseInt(kundIdParam);
+
+        const aoWhereConditions: Prisma.ArbetsorderWhereInput = {
+            status: { in: [ArbetsorderStatus.MATNING, ArbetsorderStatus.AKTIV] },
+        };
+
+        if (teknikerIdForFilter !== undefined) { 
+            aoWhereConditions.ansvarigTeknikerId = teknikerIdForFilter;
+        } else if (allAssignedButUnbookedParam) { 
+            aoWhereConditions.ansvarigTeknikerId = { not: null };
+        }
+        
+        const potentiellaAO = await prisma.arbetsorder.findMany({
+            where: aoWhereConditions,
+            include: {
+                ...standardIncludes,
+                kalender: { 
+                    select: { id: true, hanteradAvAdmin: true, slutDatumTid: true } 
+                }
+            },
+            orderBy: { skapadDatum: 'asc' },
+            take: 200, 
+        });
+        
+        for (const ao of potentiellaAO) {
+            let ärObokad = true;
+            if (ao.status === ArbetsorderStatus.MATNING) {
+                const ärRedanHanteradEllerBokad = ao.kalender.some(k => k.hanteradAvAdmin || (!k.hanteradAvAdmin && k.slutDatumTid >= new Date()));
+                if (ärRedanHanteradEllerBokad) {
+                    ärObokad = false;
+                }
+            } else if (ao.status === ArbetsorderStatus.AKTIV) {
+                const harKommandeEjHanteradBokning = ao.kalender.some(k => !k.hanteradAvAdmin && k.slutDatumTid >= new Date());
+                if (harKommandeEjHanteradBokning) {
+                    ärObokad = false;
+                }
+            }
+            if (ärObokad) {
+                const { kalender, ...restenAvAo } = ao;
+                finalArbetsordrar.push(restenAvAo);
+            }
+        }
+        totalArbetsordrarCount = finalArbetsordrar.length;
     } else {
+        // Standardfiltrering för huvudsidan /arbetsordrar
         if (statusParam) {
           const statusArray = statusParam.split(',') as ArbetsorderStatus[];
-          if (statusArray.length > 0) {
+          if (statusArray.length > 0 && statusArray.every(s => Object.values(ArbetsorderStatus).includes(s))) {
             whereInput.status = { in: statusArray };
           }
         }
         if (teknikerIdParam) {
-          whereInput.ansvarigTeknikerId = parseInt(teknikerIdParam);
+          const parsedTeknikerId = parseInt(teknikerIdParam);
+          if(!isNaN(parsedTeknikerId)) whereInput.ansvarigTeknikerId = parsedTeknikerId;
         }
         if (kundIdParam) {
-          whereInput.kundId = parseInt(kundIdParam);
+          const parsedKundId = parseInt(kundIdParam);
+          if (!isNaN(parsedKundId)) whereInput.kundId = parsedKundId;
         }
 
         if (search) { 
@@ -81,66 +172,42 @@ export async function GET(req: NextRequest) {
             whereInput.OR = searchORConditions;
           }
         }
+        totalArbetsordrarCount = await prisma.arbetsorder.count({ where: whereInput });
+        finalArbetsordrar = await prisma.arbetsorder.findMany({
+            where: whereInput,
+            include: standardIncludes,
+            skip: skip,
+            take: pageSize,
+            orderBy: { skapadDatum: 'desc' },
+        });
     }
     
-    const total = await prisma.arbetsorder.count({ where: whereInput });
-
-    const arbetsordrar = await prisma.arbetsorder.findMany({
-      where: whereInput,
-      include: {
-        kund: {
-          include: {
-            privatperson: true,
-            foretag: true,
-          },
-        },
-        ansvarigTekniker: { 
-          select: {
-            id: true,
-            fornamn: true,
-            efternamn: true,
-          },
-        },
-        orderrader: includeOrderraderParam ? { 
-          include: {
-            prislista: true, 
-          },
-        } : { 
-          select: { id: true } 
-        },
-        bilder: { 
-          select: { id: true },
-        },
-        skapadAv: {
-          select: {
-            id: true,
-            fornamn: true,
-            efternamn: true,
-          },
-        },
-      },
-      skip: (ansvarigForObokadeIdParam || allAssignedButUnbookedParam || otilldeladMatning) ? 0 : skip,
-      take: (ansvarigForObokadeIdParam || allAssignedButUnbookedParam || otilldeladMatning) ? 100 : pageSize, 
-      orderBy: {
-        skapadDatum: (ansvarigForObokadeIdParam || allAssignedButUnbookedParam || otilldeladMatning) ? 'asc' : 'desc', 
-      },
-    });
-    
     const statusCountsWhere: Prisma.ArbetsorderWhereInput = {};
-    if(search && !(ansvarigForObokadeIdParam || allAssignedButUnbookedParam || otilldeladMatning)) {
+    if(search && !(ansvarigForObokadeIdParam || allAssignedButUnbookedParam || otilldeladMatning || otilldeladeAktiva)) {
         const searchIdNum = parseInt(search);
         statusCountsWhere.OR = [
             ...( !isNaN(searchIdNum) ? [{ id: searchIdNum }] : []),
             { referensMärkning: { contains: search, mode: 'insensitive' } },
             { material: { contains: search, mode: 'insensitive' } },
+            { kund: { privatperson: { OR: [ { fornamn: { contains: search, mode: 'insensitive' } }, { efternamn: { contains: search, mode: 'insensitive' } } ] } } },
+            { kund: { foretag: { foretagsnamn: { contains: search, mode: 'insensitive' } } } },
         ];
+         if (kundIdParam) {
+            const parsedKundId = parseInt(kundIdParam);
+            if(!isNaN(parsedKundId)) {
+                 statusCountsWhere.AND = statusCountsWhere.AND ? 
+                    [...(Array.isArray(statusCountsWhere.AND) ? statusCountsWhere.AND : [statusCountsWhere.AND]), { kundId: parsedKundId }] 
+                    : [{ kundId: parsedKundId }];
+            }
+        }
+    } else if (kundIdParam && !(ansvarigForObokadeIdParam || allAssignedButUnbookedParam || otilldeladMatning || otilldeladeAktiva)) {
+         const parsedKundId = parseInt(kundIdParam);
+         if(!isNaN(parsedKundId)) statusCountsWhere.kundId = parsedKundId;
     }
 
     const statusCounts = await prisma.arbetsorder.groupBy({
       by: ['status'],
-      _count: { 
-        id: true
-      },
+      _count: { id: true },
       where: Object.keys(statusCountsWhere).length > 0 ? statusCountsWhere : undefined,
     });
 
@@ -150,13 +217,15 @@ export async function GET(req: NextRequest) {
       return acc;
     }, {} as Record<ArbetsorderStatus, number>);
 
+    const isSpecialFilterForDashboard = !!(ansvarigForObokadeIdParam || allAssignedButUnbookedParam || otilldeladeAktiva || otilldeladMatning);
+
     return NextResponse.json({
-      arbetsordrar,
+      arbetsordrar: finalArbetsordrar,
       pagination: {
-        total,
-        page: (ansvarigForObokadeIdParam || allAssignedButUnbookedParam || otilldeladMatning) ? 1 : page, 
-        pageSize: (ansvarigForObokadeIdParam || allAssignedButUnbookedParam || otilldeladMatning) ? arbetsordrar.length : pageSize,
-        totalPages: (ansvarigForObokadeIdParam || allAssignedButUnbookedParam || otilldeladMatning) ? 1 : Math.ceil(total / pageSize),
+        total: totalArbetsordrarCount,
+        page: isSpecialFilterForDashboard ? 1 : page, 
+        pageSize: isSpecialFilterForDashboard ? finalArbetsordrar.length : pageSize,
+        totalPages: isSpecialFilterForDashboard ? (totalArbetsordrarCount > 0 ? 1 : 0) : Math.ceil(totalArbetsordrarCount / pageSize),
       },
       statusStats,
     });
@@ -170,7 +239,7 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// POST /api/arbetsordrar - Skapa en ny arbetsorder
+// POST-funktionen
 export async function POST(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);

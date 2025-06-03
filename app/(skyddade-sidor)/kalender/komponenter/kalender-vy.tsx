@@ -1,21 +1,28 @@
 // /app/(skyddade-sidor)/kalender/komponenter/kalender-vy.tsx
 'use client';
 
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, ComponentProps } from 'react'; // Importera ComponentProps
 import FullCalendar from '@fullcalendar/react';
-import { CalendarApi } from '@fullcalendar/core';
+// Ta bort DateClickArg från denna import om den orsakar felet
+import { CalendarApi, DateSelectArg, EventClickArg } from '@fullcalendar/core'; 
 import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import interactionPlugin from '@fullcalendar/interaction';
 import { Loader2 } from 'lucide-react';
 import { Locale } from 'date-fns';
-import { KalenderEvent } from '../page';
+import { KalenderEvent } from '../page'; 
+
+// Inferera DateClickArg typen från FullCalendar component props
+type FullCalendarDateClickCallback = ComponentProps<typeof FullCalendar>['dateClick'];
+type InferredDateClickArg = FullCalendarDateClickCallback extends ((arg: infer A) => void) | undefined ? A : never;
+
 
 interface KalenderVyProps {
   events: KalenderEvent[];
   loading: boolean;
-  onDateClick: (date: Date) => void;
-  onEventClick: (eventId: number) => void;
+  onDateClick: (date: Date, allDay: boolean) => void; 
+  onSelectDates: (start: Date, end: Date, allDay: boolean) => void;
+  onEventClick: (clickInfo: EventClickArg) => void; 
   onEventChange: (eventId: string, newStart: Date, newEnd: Date) => Promise<boolean>;
   onCalendarApiReady: (api: CalendarApi) => void;
   locale: Locale;
@@ -33,7 +40,8 @@ export default function KalenderVy({
   events,
   loading,
   onDateClick,
-  onEventClick,
+  onSelectDates,
+  onEventClick, 
   onEventChange,
   onCalendarApiReady,
   locale,
@@ -50,13 +58,49 @@ export default function KalenderVy({
     }
   }, [onCalendarApiReady]);
 
+  // Använd den infererade typen här
+  const handleDateClickInternal = (clickInfo: InferredDateClickArg) => { 
+    // Säkerställ att clickInfo inte är undefined (även om det är osannolikt här)
+    if (!clickInfo) return;
 
-  const handleDateClick = (info: any) => { /* ... */ const clickedDate = new Date(info.date); onDateClick(clickedDate); };
-  const handleEventClick = (info: any) => { /* ... */ const eventId = parseInt(info.event.id); if (!isNaN(eventId)) { onEventClick(eventId); } };
-  const handleEventDrop = async (dropInfo: any) => { /* ... */ const eventId = dropInfo.event.id; const newStart = dropInfo.event.start; const newEnd = dropInfo.event.end || newStart; const success = await onEventChange(eventId, newStart, newEnd); if (!success) { dropInfo.revert(); } };
-  const handleEventResize = async (resizeInfo: any) => { /* ... */ const eventId = resizeInfo.event.id; const newStart = resizeInfo.event.start; const newEnd = resizeInfo.event.end; const success = await onEventChange(eventId, newStart, newEnd); if (!success) { resizeInfo.revert(); } };
+    const clickedDate = new Date(clickInfo.date);
+    onDateClick(clickedDate, clickInfo.allDay); 
+  };
 
-  if (loading) { /* ... */ return <div className="flex justify-center items-center h-96"><Loader2 className="h-8 w-8 animate-spin mr-2" /><span>Laddar kalender...</span></div>; }
+  const handleDatesSelectedInternal = (selectionInfo: DateSelectArg) => {
+    onSelectDates(selectionInfo.start, selectionInfo.end, selectionInfo.allDay);
+    if (calendarComponentRef.current) { 
+        calendarComponentRef.current.getApi().unselect();
+    }
+  };
+
+  const handleEventClickInternal = (clickInfo: EventClickArg) => {
+    onEventClick(clickInfo); 
+  };
+  
+  const handleEventDropInternal = async (dropInfo: any) => { 
+    const eventId = dropInfo.event.id;
+    const newStart = dropInfo.event.start;
+    const newEnd = dropInfo.event.end || newStart; 
+    const success = await onEventChange(eventId, newStart, newEnd);
+    if (!success) {
+      dropInfo.revert();
+    }
+  };
+  
+  const handleEventResizeInternal = async (resizeInfo: any) => { 
+    const eventId = resizeInfo.event.id;
+    const newStart = resizeInfo.event.start;
+    const newEnd = resizeInfo.event.end;
+    const success = await onEventChange(eventId, newStart, newEnd);
+    if (!success) {
+      resizeInfo.revert();
+    }
+  };
+
+  if (loading) {
+    return <div className="flex justify-center items-center h-96"><Loader2 className="h-8 w-8 animate-spin mr-2" /><span>Laddar kalender...</span></div>;
+  }
 
   return (
     <div className="flex-1 h-[700px]">
@@ -68,14 +112,15 @@ export default function KalenderVy({
         events={events}
         locale={locale.code}
         buttonText={buttonText}
-        dateClick={handleDateClick}
-        eventClick={handleEventClick}
+        dateClick={handleDateClickInternal} 
+        select={handleDatesSelectedInternal} 
+        eventClick={handleEventClickInternal} 
         nowIndicator={true}
-        selectable={true}
+        selectable={true} 
         selectMirror={true}
         editable={true} 
-        eventDrop={handleEventDrop}     
-        eventResize={handleEventResize} 
+        eventDrop={handleEventDropInternal}     
+        eventResize={handleEventResizeInternal} 
         dayMaxEvents={true}
         weekends={true}
         allDaySlot={true}
@@ -84,6 +129,8 @@ export default function KalenderVy({
         height="100%"
         expandRows={true}
         eventTimeFormat={{ hour: '2-digit', minute: '2-digit', meridiem: false }}
+        selectOverlap={false} 
+        longPressDelay={250} 
       />
     </div>
   );
