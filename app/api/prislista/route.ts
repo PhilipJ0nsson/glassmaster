@@ -1,5 +1,7 @@
+// File: app/api/prislista/route.ts
 import { prisma } from '@/lib/prisma';
 import { NextRequest, NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client'; // Importera Prisma för typning
 
 // GET /api/prislista - Hämta alla prisposter
 export async function GET(req: NextRequest) {
@@ -49,7 +51,7 @@ export async function GET(req: NextRequest) {
     });
 
     // Hämta alla unika kategorier för filtrering
-    const kategorier = await prisma.prislista.findMany({
+    const kategorierDb = await prisma.prislista.findMany({ // Byt namn för att undvika skuggning
       select: {
         kategori: true,
       },
@@ -62,7 +64,7 @@ export async function GET(req: NextRequest) {
     });
 
     // Extrahera unika kategoristrängar
-    const unikaKategorier = kategorier
+    const unikaKategorier = kategorierDb
       .map(k => k.kategori)
       .filter(Boolean) as string[];
 
@@ -95,17 +97,28 @@ export async function POST(req: NextRequest) {
       prisExklMoms, 
       momssats,
       kategori,
-      artikelnummer,
+      artikelnummer, // Detta kommer som "" om det är tomt från formuläret
       prissattningTyp
     } = body;
 
     // Beräkna pris inklusive moms
     const prisInklMoms = parseFloat(prisExklMoms) * (1 + parseFloat(momssats) / 100);
 
-    // Kontrollera om artikelnummer redan finns
-    if (artikelnummer) {
+    const dataToCreate: Prisma.PrislistaCreateInput = {
+      namn,
+      prisExklMoms: parseFloat(prisExklMoms),
+      momssats: parseFloat(momssats),
+      prisInklMoms,
+      kategori: kategori || null, // Konvertera tom sträng till null
+      artikelnummer: artikelnummer || null, // Konvertera tom sträng till null
+      prissattningTyp: prissattningTyp || 'ST',
+    };
+
+
+    // Kontrollera om artikelnummer redan finns (OM det faktiskt är satt, dvs inte null)
+    if (dataToCreate.artikelnummer) { // Denna kontroll körs nu bara om artikelnummer är en icke-tom sträng
       const befintligArtikel = await prisma.prislista.findUnique({
-        where: { artikelnummer }
+        where: { artikelnummer: dataToCreate.artikelnummer }, // artikelnummer är garanterat en sträng här
       });
 
       if (befintligArtikel) {
@@ -117,23 +130,22 @@ export async function POST(req: NextRequest) {
     }
 
     const prispost = await prisma.prislista.create({
-      data: {
-        namn,
-        prisExklMoms: parseFloat(prisExklMoms),
-        momssats: parseFloat(momssats),
-        prisInklMoms,
-        kategori,
-        artikelnummer,
-        prissattningTyp: prissattningTyp || 'ST', // Default to styckpris if not specified
-      }
+      data: dataToCreate
     });
 
     return NextResponse.json(prispost, { status: 201 });
 
-  } catch (error) {
+  } catch (error: any) { // Lägg till typ any för error för att komma åt code etc.
     console.error('Fel vid skapande av prispost:', error);
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === 'P2002') { // Unik constraint violation
+        // Detta block bör nu inte nås för tomma artikelnummer om ovanstående logik är korrekt,
+        // men det är bra att ha kvar för andra unika fält eller oväntade fall.
+        return NextResponse.json({ error: `Databasfel: Ett unikt värde kränktes. Fält: ${error.meta?.target}` }, { status: 409 });
+      }
+    }
     return NextResponse.json(
-      { error: 'Ett fel uppstod vid skapande av prispost' },
+      { error: 'Ett fel uppstod vid skapande av prispost', details: error.message },
       { status: 500 }
     );
   }

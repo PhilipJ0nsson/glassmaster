@@ -1,6 +1,9 @@
+// File: app/api/prislista/[id]/route.ts
 import { prisma } from '@/lib/prisma';
 import { NextRequest, NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client'; // Importera Prisma för typning
 
+// Definiera RouteParams här
 interface RouteParams {
   params: {
     id: string;
@@ -59,7 +62,7 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
       prisExklMoms, 
       momssats, 
       kategori, 
-      artikelnummer,
+      artikelnummer, // Detta kommer som "" om det är tomt från formuläret
       prissattningTyp
     } = body;
 
@@ -75,43 +78,51 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Kontrollera om artikelnummer redan finns (om det har ändrats)
-    if (artikelnummer && artikelnummer !== befintligPrispost.artikelnummer) {
-      const befintligArtikel = await prisma.prislista.findUnique({
-        where: { artikelnummer }
-      });
-
-      if (befintligArtikel) {
-        return NextResponse.json(
-          { error: 'Artikelnumret finns redan' },
-          { status: 400 }
-        );
-      }
-    }
-
     // Beräkna pris inklusive moms
     const prisInklMoms = parseFloat(prisExklMoms) * (1 + parseFloat(momssats) / 100);
 
-    // Uppdatera prisposten
-    const updatedPrispost = await prisma.prislista.update({
-      where: { id },
-      data: {
+    const dataToUpdate: Prisma.PrislistaUpdateInput = {
         namn,
         prisExklMoms: parseFloat(prisExklMoms),
         momssats: parseFloat(momssats),
         prisInklMoms,
-        kategori,
-        artikelnummer,
+        kategori: kategori || null, // Konvertera tom sträng till null
+        artikelnummer: artikelnummer || null, // Konvertera tom sträng till null
         prissattningTyp: prissattningTyp || befintligPrispost.prissattningTyp || 'ST',
+    };
+
+
+    // Kontrollera om artikelnummer redan finns (OM det har ändrats och inte är null)
+    if (dataToUpdate.artikelnummer && dataToUpdate.artikelnummer !== befintligPrispost.artikelnummer) {
+      const artikelFinns = await prisma.prislista.findUnique({
+        where: { artikelnummer: dataToUpdate.artikelnummer as string }, // artikelnummer är garanterat en sträng här
+      });
+
+      if (artikelFinns && artikelFinns.id !== id) { // Se till att det inte är samma post
+        return NextResponse.json(
+          { error: 'Artikelnumret används redan av en annan post' },
+          { status: 409 } // HTTP 409 Conflict
+        );
       }
+    }
+
+    // Uppdatera prisposten
+    const updatedPrispost = await prisma.prislista.update({
+      where: { id },
+      data: dataToUpdate
     });
 
     return NextResponse.json(updatedPrispost);
 
-  } catch (error) {
+  } catch (error: any) { // Lägg till typ any för error för att komma åt code etc.
     console.error('Fel vid uppdatering av prispost:', error);
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+        if (error.code === 'P2002') { // Unik constraint violation
+             return NextResponse.json({ error: `Databasfel: Ett unikt värde kränktes. Fält: ${error.meta?.target}` }, { status: 409 });
+        }
+    }
     return NextResponse.json(
-      { error: 'Ett fel uppstod vid uppdatering av prispost' },
+      { error: 'Ett fel uppstod vid uppdatering av prispost', details: error.message },
       { status: 500 }
     );
   }

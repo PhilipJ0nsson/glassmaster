@@ -8,12 +8,11 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogDescription, // Importera DialogDescription
+  DialogDescription,
 } from "@/components/ui/dialog";
 import {
   Form,
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -28,12 +27,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react"; // Importera useCallback
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 import { PrislistaData } from "../page";
-import { Loader2, Trash } from "lucide-react"; // Importera Loader2 och Trash
+import { Loader2, Trash } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -43,7 +42,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog"; // Importera AlertDialog
+} from "@/components/ui/alert-dialog";
 
 const prisSchema = z.object({
   namn: z.string().min(1, "Namn måste anges"),
@@ -70,7 +69,7 @@ interface PrisDialogProps {
   isOpen: boolean;
   onOpenChange: (isOpen: boolean) => void;
   onPrisSaved: () => void;
-  defaultValues?: PrislistaData; // Gör optional för att hantera både create och edit
+  defaultValues?: PrislistaData;
   isEditing?: boolean;
 }
 
@@ -82,26 +81,27 @@ export default function PrisDialog({
   isEditing = false,
 }: PrisDialogProps) {
   const [loading, setLoading] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false); // För radering
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false); // För bekräftelsedialog
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [prisInklMoms, setPrisInklMoms] = useState<string>("");
 
-  const initialValues: PrisFormValues = {
+  const initialValues = useCallback((): PrisFormValues => ({ // Använd useCallback för initialValues
     namn: "",
     prisExklMoms: "",
     momssats: "25",
     prissattningTyp: "ST",
     kategori: "",
     artikelnummer: "",
-  };
+  }), []);
+
 
   const form = useForm<PrisFormValues>({
     resolver: zodResolver(prisSchema),
-    defaultValues: initialValues,
+    defaultValues: initialValues(), 
   });
 
   useEffect(() => {
-    if (isOpen) { // Återställ endast om dialogen är öppen
+    if (isOpen) {
         if (defaultValues && isEditing) {
             form.reset({
                 namn: defaultValues.namn,
@@ -112,31 +112,37 @@ export default function PrisDialog({
                 artikelnummer: defaultValues.artikelnummer || "",
             });
         } else {
-            form.reset(initialValues); // Reset till initialValues om det är ny post eller ingen defaultValues
+            form.reset(initialValues());
         }
     }
-  }, [defaultValues, isOpen, form, isEditing]);
+  }, [defaultValues, isOpen, form, isEditing, initialValues]);
+
+  // Lyssna på ändringar i specifika fält för att beräkna pris inkl. moms
+  const watchedPrisExklMoms = form.watch("prisExklMoms");
+  const watchedMomssats = form.watch("momssats");
 
   useEffect(() => {
-    const subscription = form.watch((value, { name }) => {
-      if (
-        (name === "prisExklMoms" || name === "momssats" || name === undefined) &&
-        value.prisExklMoms &&
-        value.momssats
-      ) {
-        const prisExkl = parseFloat(value.prisExklMoms as string);
-        const momssats = parseFloat(value.momssats as string);
+    if (watchedPrisExklMoms && watchedMomssats) {
+      const prisExkl = parseFloat(watchedPrisExklMoms);
+      const momssatsNum = parseFloat(watchedMomssats);
 
-        if (!isNaN(prisExkl) && !isNaN(momssats)) {
-          const prisInkl = prisExkl * (1 + momssats / 100);
-          setPrisInklMoms(prisInkl.toFixed(2));
-        } else {
+      if (!isNaN(prisExkl) && !isNaN(momssatsNum)) {
+        const beraknatPrisInkl = prisExkl * (1 + momssatsNum / 100);
+        const beraknatPrisInklStr = beraknatPrisInkl.toFixed(2);
+        if (prisInklMoms !== beraknatPrisInklStr) {
+          setPrisInklMoms(beraknatPrisInklStr);
+        }
+      } else {
+        if (prisInklMoms !== "") {
           setPrisInklMoms("");
         }
       }
-    });
-    return () => subscription.unsubscribe();
-  }, [form.watch]);
+    } else {
+        if (prisInklMoms !== "") {
+           setPrisInklMoms("");
+        }
+    }
+  }, [watchedPrisExklMoms, watchedMomssats, prisInklMoms]); // Endast dessa dependencies
 
   const onSubmit = async (data: PrisFormValues) => {
     try {
@@ -144,9 +150,10 @@ export default function PrisDialog({
       
       const payload = {
         ...data,
-        // Konvertera till nummer här om det behövs av API:et
         prisExklMoms: parseFloat(data.prisExklMoms),
         momssats: parseFloat(data.momssats),
+        artikelnummer: data.artikelnummer || null,
+        kategori: data.kategori || null,
       };
 
       const url = isEditing && defaultValues 
@@ -174,7 +181,7 @@ export default function PrisDialog({
           : "Ny prispost har sparats"
       );
       
-      onPrisSaved(); // Anropa onPrisSaved för att stänga dialog och uppdatera listan
+      onPrisSaved();
     } catch (error: any) {
       console.error("Fel vid sparande av prispost:", error);
       toast.error(error.message || "Kunde inte spara prisposten");
@@ -197,7 +204,7 @@ export default function PrisDialog({
         throw new Error(errorData.error || 'Kunde inte radera prisposten.');
       }
       toast.success('Prisposten har raderats.');
-      onPrisSaved(); // Close dialog and refresh list
+      onPrisSaved();
     } catch (error: any) {
       toast.error(error.message || 'Kunde inte radera prisposten');
       console.error('Fel vid radering av prispost:', error);
@@ -253,6 +260,23 @@ export default function PrisDialog({
             />
             <FormField
               control={form.control}
+              name="artikelnummer"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Artikelnummer</FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder="T.ex. GR-6080"
+                      {...field}
+                      value={field.value || ""} 
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
               name="prisExklMoms"
               render={({ field }) => (
                 <FormItem>
@@ -297,7 +321,7 @@ export default function PrisDialog({
                   <FormLabel>Prissättningstyp *</FormLabel>
                   <Select 
                     onValueChange={field.onChange} 
-                    value={field.value} // Använd value istället för defaultValue för kontrollerad komponent
+                    value={field.value}
                   >
                     <FormControl>
                       <SelectTrigger>
@@ -337,7 +361,7 @@ export default function PrisDialog({
                   const fetchKategorier = async () => {
                     setLoadingKategorier(true);
                     try {
-                      const response = await fetch('/api/prislista?pageSize=0'); // Hämta alla för kategorilista
+                      const response = await fetch('/api/prislista?pageSize=0');
                       if (!response.ok) throw new Error("Kunde inte hämta kategorier");
                       const data = await response.json();
                       setAvailableKategorier(data.kategorier || []);
@@ -354,8 +378,8 @@ export default function PrisDialog({
                     }
                   };
                   
-                  if(isOpen) fetchKategorier(); // Hämta bara när dialogen är öppen
-                }, [isOpen, field.value]); // Kör om när field.value ändras för att hantera extern återställning
+                  if(isOpen) fetchKategorier();
+                }, [isOpen, field.value]);
                 
                 return (
                   <FormItem>
@@ -365,14 +389,14 @@ export default function PrisDialog({
                           onValueChange={(value) => {
                             if (value === '__NEW__') {
                               setIsCustomCategory(true);
-                              field.onChange(''); // Rensa fältet för ny kategori
+                              field.onChange('');
                             } else if (value === '__NONE__') {
-                              field.onChange(''); // Sätt till tom sträng för "Ingen kategori"
+                              field.onChange('');
                             } else {
                               field.onChange(value);
                             }
                           }}
-                          value={field.value || '__NONE__'} // Sätt __NONE__ om värdet är tomt
+                          value={field.value || '__NONE__'}
                           disabled={loadingKategorier}
                         >
                           <FormControl>
@@ -402,7 +426,7 @@ export default function PrisDialog({
                           <Input
                             placeholder="Ange ny kategori"
                             {...field}
-                            value={field.value || ""} // Säkerställ att värdet inte är null/undefined
+                            value={field.value || ""}
                           />
                         </FormControl>
                         <Button
@@ -411,7 +435,7 @@ export default function PrisDialog({
                           size="sm"
                           onClick={() => {
                             setIsCustomCategory(false);
-                            field.onChange(''); // Rensa fältet när man avbryter
+                            field.onChange('');
                           }}
                         >
                           Avbryt
@@ -423,28 +447,12 @@ export default function PrisDialog({
                 );
               }}
             />
-            <FormField
-              control={form.control}
-              name="artikelnummer"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Artikelnummer</FormLabel>
-                  <FormControl>
-                    <Input
-                      placeholder="T.ex. GR-6080"
-                      {...field}
-                      value={field.value || ""}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+           
             <DialogFooter className="pt-4">
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => onOpenChange(false)} // Anropa onOpenChange för att stänga
+                onClick={() => onOpenChange(false)}
                 disabled={loading || isDeleting}
               >
                 Avbryt
