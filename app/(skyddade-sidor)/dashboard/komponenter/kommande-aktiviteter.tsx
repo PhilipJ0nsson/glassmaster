@@ -11,7 +11,7 @@ import { Loader2, CalendarDays, Clock, User, Briefcase, MapPin, Phone, Info, Che
 import { format, parseISO, isSameDay } from 'date-fns';
 import { sv } from 'date-fns/locale';
 import Link from 'next/link';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { ScrollArea } from '@/components/ui/scroll-area'; // Behållen för extern scroll om listan blir lång
 import { MotesTyp, ArbetsorderStatus, Arbetsorder as PrismaArbetsorder, AnvandareRoll } from '@prisma/client';
 import { useRouter } from 'next/navigation';
 
@@ -294,7 +294,7 @@ export default function KommandeAktiviteter({ onActivityHandled, anstallda, load
     return (
       <Card>
         <CardHeader><CardTitle className="flex items-center"><CalendarDays className="mr-2 h-5 w-5" /> {cardTitle}</CardTitle></CardHeader>
-        <CardContent className="h-72 flex items-center justify-center">
+        <CardContent className="h-72 flex items-center justify-center"> {/* Behåll fast höjd för laddningsvy */}
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /><p className="ml-2 text-muted-foreground">Laddar...</p>
         </CardContent>
       </Card>
@@ -305,7 +305,7 @@ export default function KommandeAktiviteter({ onActivityHandled, anstallda, load
      return (
       <Card>
         <CardHeader><CardTitle className="flex items-center"><CalendarDays className="mr-2 h-5 w-5" /> {cardTitle}</CardTitle></CardHeader>
-        <CardContent className="h-72 flex items-center justify-center text-destructive"><p>{error}</p></CardContent>
+        <CardContent className="h-72 flex items-center justify-center text-destructive"><p>{error}</p></CardContent> {/* Behåll fast höjd för felvy */}
       </Card>
     );
   }
@@ -313,131 +313,138 @@ export default function KommandeAktiviteter({ onActivityHandled, anstallda, load
   return (
     <Card>
       <CardHeader><CardTitle className="flex items-center"><CalendarDays className="mr-2 h-5 w-5" /> {cardTitle}</CardTitle></CardHeader>
-      <CardContent>
+      <CardContent style={{ overflowY: 'visible', height: 'auto' }}> {/* Försök åsidosätta overflow här också om det behövs, men troligen inte */}
         {(harIngaDataAttVisa && !isLoading) ? (
           <p className="text-muted-foreground py-4 text-center">Du har inga kommande aktiviteter eller obokade jobb som matchar din roll/filter.</p>
         ) : (
-          <ScrollArea className="h-[calc(24rem+10rem)]">
-            <div className="space-y-4 pr-3">
-              {/* 1. Bokade Aktiviteter */}
-              {bokadeAktiviteter.map((akt) => {
-                const arbetsorder = akt.arbetsorder;
-                let actionButton = null;
-                let displayTitle = arbetsorder
-                                   ? getArbetsorderDisplayTitle(arbetsorder, akt.titel)
-                                   : akt.titel || getMotesTypText(akt.motestyp);
-                const canTakeAction = session?.user?.id === akt.ansvarigId.toString() || isAdminOrArbetsledare;
+          // ScrollArea är borttagen, och den fasta höjden är också borta
+          <div className="space-y-4"> {/* Tog bort pr-3, kan läggas till om det ser bättre ut */}
+            {/* 1. Bokade Aktiviteter */}
+            {bokadeAktiviteter.map((akt) => {
+              const arbetsorder = akt.arbetsorder;
+              let actionButton = null;
+              let displayTitle = arbetsorder
+                                 ? getArbetsorderDisplayTitle(arbetsorder, akt.titel)
+                                 : akt.titel || getMotesTypText(akt.motestyp);
+              const canTakeAction = session?.user?.id === akt.ansvarigId.toString() || isAdminOrArbetsledare;
 
-                if (arbetsorder && canTakeAction) {
-                    if (arbetsorder.status === ArbetsorderStatus.MATNING) {
-                        actionButton = ( <Button size="sm" variant="outline" className="w-full sm:w-auto border-blue-500 text-blue-600 hover:bg-blue-50 hover:text-blue-700 dark:border-blue-400 dark:text-blue-300 dark:hover:bg-blue-900/50 dark:hover:text-blue-200 whitespace-nowrap" onClick={() => handleMarkKalenderEventAsHandled(akt.id, arbetsorder.id)} disabled={handlingEventId === akt.id} > {handlingEventId === akt.id ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <ClipboardCheck className="mr-1.5 h-4 w-4 flex-shrink-0" />} <span className="truncate">Mätning Utförd</span> </Button> );
-                      } else if (arbetsorder.status === ArbetsorderStatus.AKTIV) {
-                        actionButton = ( <Button size="sm" variant="outline" className="w-full sm:w-auto border-green-500 text-green-600 hover:bg-green-50 hover:text-green-700 dark:border-green-400 dark:text-green-300 dark:hover:bg-green-900/50 dark:hover:text-green-200 whitespace-nowrap" onClick={() => handleArbetsorderStatusUpdate(arbetsorder.id, ArbetsorderStatus.SLUTFORD, `Arbetsorder #${arbetsorder.id} markerad som slutförd.`)} disabled={updatingStatusId === arbetsorder.id} > {updatingStatusId === arbetsorder.id ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-1.5 h-4 w-4 flex-shrink-0" />} <span className="truncate">Slutför Order</span> </Button> );
-                      }
-                }
+              if (arbetsorder && canTakeAction) {
+                  if (arbetsorder.status === ArbetsorderStatus.MATNING) {
+                      actionButton = ( <Button size="sm" variant="outline" className="w-full sm:w-auto border-blue-500 text-blue-600 hover:bg-blue-50 hover:text-blue-700 dark:border-blue-400 dark:text-blue-300 dark:hover:bg-blue-900/50 dark:hover:text-blue-200 whitespace-nowrap" onClick={() => handleMarkKalenderEventAsHandled(akt.id, arbetsorder.id)} disabled={handlingEventId === akt.id} > {handlingEventId === akt.id ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <ClipboardCheck className="mr-1.5 h-4 w-4 flex-shrink-0" />} <span className="truncate">Mätning Utförd</span> </Button> );
+                    } else if (arbetsorder.status === ArbetsorderStatus.AKTIV) {
+                      actionButton = ( <Button size="sm" variant="outline" className="w-full sm:w-auto border-green-500 text-green-600 hover:bg-green-50 hover:text-green-700 dark:border-green-400 dark:text-green-300 dark:hover:bg-green-900/50 dark:hover:text-green-200 whitespace-nowrap" onClick={() => handleArbetsorderStatusUpdate(arbetsorder.id, ArbetsorderStatus.SLUTFORD, `Arbetsorder #${arbetsorder.id} markerad som slutförd.`)} disabled={updatingStatusId === arbetsorder.id} > {updatingStatusId === arbetsorder.id ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-1.5 h-4 w-4 flex-shrink-0" />} <span className="truncate">Slutför Order</span> </Button> );
+                    }
+              }
 
-                return (
-                  <div key={`kal-${akt.id}`} className="p-3 sm:p-4 border rounded-lg shadow-sm bg-card hover:shadow-md transition-shadow">
-                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
-                        <div className="flex-grow min-w-0">
-                            <h4 className="font-semibold text-md mb-0.5 truncate">
-                                {displayTitle}
-                                {arbetsorder && ( <span className={`ml-2 text-xs font-normal px-1.5 py-0.5 rounded-full border whitespace-nowrap ${ arbetsorder.status === ArbetsorderStatus.MATNING ? 'bg-orange-100 text-orange-700 border-orange-300 dark:bg-orange-800/30 dark:text-orange-300 dark:border-orange-700' : arbetsorder.status === ArbetsorderStatus.OFFERT ? 'bg-yellow-100 text-yellow-700 border-yellow-300 dark:bg-yellow-800/30 dark:text-yellow-300 dark:border-yellow-700' : 'bg-blue-100 text-blue-700 border-blue-300 dark:bg-blue-800/30 dark:text-blue-300 dark:border-blue-700'}`}>{getArbetsorderStatusText(arbetsorder.status as ArbetsorderStatus)}</span> )}
-                            </h4>
-                            {isAdminOrArbetsledare && akt.ansvarig && session?.user?.id !== akt.ansvarigId.toString() && (
-                                <p className="text-xs italic text-muted-foreground mb-1">(Ansvarig: {akt.ansvarig.fornamn} {akt.ansvarig.efternamn})</p>
-                            )}
-                            <p className="text-sm text-muted-foreground flex items-center flex-wrap"> <Clock className="mr-1.5 h-4 w-4 flex-shrink-0" /> {formatDateRange(akt.datumTid, akt.slutDatumTid)} </p>
-                        </div>
-                        {(arbetsorder || actionButton) && (
-                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 mt-2 sm:mt-0 w-full sm:w-auto flex-shrink-0">
-                            {arbetsorder && (
-                            <Link href={`/arbetsordrar/${arbetsorder.id}`} passHref className="w-full sm:w-auto">
-                                <Button size="sm" variant="outline" className="w-full sm:w-auto text-primary border-primary/50 hover:bg-primary/10 whitespace-nowrap">
+              return (
+                <div key={`kal-${akt.id}`} className="p-3 sm:p-4 border rounded-lg shadow-sm bg-card hover:shadow-md transition-shadow">
+                  {/* ÄNDRING: Lade till sm:flex-wrap för att tillåta wrapping på små skärmar och uppåt */}
+                  <div className="flex flex-col sm:flex-row sm:flex-wrap justify-between items-start sm:items-center gap-2">
+                      <div className="flex-grow min-w-0"> {/* Viktigt med min-w-0 för att truncate ska fungera korrekt */}
+                          <h4 className="font-semibold text-md mb-0.5 truncate"> {/* truncate klipper av text som är för lång */}
+                              {displayTitle}
+                              {arbetsorder && ( <span className={`ml-2 text-xs font-normal px-1.5 py-0.5 rounded-full border whitespace-nowrap ${ arbetsorder.status === ArbetsorderStatus.MATNING ? 'bg-orange-100 text-orange-700 border-orange-300 dark:bg-orange-800/30 dark:text-orange-300 dark:border-orange-700' : arbetsorder.status === ArbetsorderStatus.OFFERT ? 'bg-yellow-100 text-yellow-700 border-yellow-300 dark:bg-yellow-800/30 dark:text-yellow-300 dark:border-yellow-700' : 'bg-blue-100 text-blue-700 border-blue-300 dark:bg-blue-800/30 dark:text-blue-300 dark:border-blue-700'}`}>{getArbetsorderStatusText(arbetsorder.status as ArbetsorderStatus)}</span> )}
+                          </h4>
+                          {isAdminOrArbetsledare && akt.ansvarig && session?.user?.id !== akt.ansvarigId.toString() && (
+                              <p className="text-xs italic text-muted-foreground mb-1">(Ansvarig: {akt.ansvarig.fornamn} {akt.ansvarig.efternamn})</p>
+                          )}
+                          <p className="text-sm text-muted-foreground flex items-center flex-wrap"> {/* flex-wrap här är bra */}
+                            <Clock className="mr-1.5 h-4 w-4 flex-shrink-0" /> {formatDateRange(akt.datumTid, akt.slutDatumTid)}
+                          </p>
+                      </div>
+                      {(arbetsorder || actionButton) && (
+                        // ÄNDRING: Gjorde denna flex-container mer flexibel för wrapping
+                        <div className="flex flex-wrap items-center gap-2 mt-2 sm:mt-0">
+                          {arbetsorder && (
+                            <Link href={`/arbetsordrar/${arbetsorder.id}`} passHref>
+                              <Button size="sm" variant="outline" className="text-primary border-primary/50 hover:bg-primary/10 whitespace-nowrap">
                                 Visa Order
-                                </Button>
+                              </Button>
                             </Link>
-                            )}
-                            {actionButton}
+                          )}
+                          {actionButton}
                         </div>
-                        )}
-                    </div>
-                    {akt.kund && ( <div className="mt-2 pt-2 border-t border-dashed dark:border-slate-700"> <p className="text-sm flex items-center mt-1"> <User className="mr-1.5 h-4 w-4 text-primary" /> <Link href={`/kunder/${akt.kund.id}`} className="hover:underline text-primary font-medium">{getKundNamn(akt.kund)}</Link> </p> {akt.kund.telefonnummer && ( <p className="text-xs text-muted-foreground flex items-center mt-1"><Phone className="mr-1.5 h-3 w-3" /> {akt.kund.telefonnummer}</p> )} {akt.kund.adress && ( <p className="text-xs text-muted-foreground flex items-center mt-1"><MapPin className="mr-1.5 h-3 w-3" /> {akt.kund.adress}</p> )} </div> )}
-                    {akt.beskrivning && !arbetsorder && ( <p className="text-xs text-muted-foreground mt-2 pt-2 border-t border-dashed dark:border-slate-700 flex items-start"><Info className="mr-1.5 h-3 w-3 mt-0.5 flex-shrink-0" /> <span>{akt.beskrivning}</span></p> )}
+                      )}
                   </div>
-                );
-              })}
-
-              {/* 2. Obokade Jobb MED Ansvarig */}
-              {obokadeJobbMedAnsvarig.length > 0 && ( <div className="my-6 border-t pt-6"> <h4 className="text-sm font-medium text-muted-foreground mb-3 text-center"> {isAdminOrArbetsledare ? "Tilldelade Obokade Jobb" : "Dina Obokade Tilldelade Jobb"} </h4> </div> )}
-              {obokadeJobbMedAnsvarig.map((ao) => (
-                <div key={`obokad-tilldelad-${ao.id}`} className="p-3 sm:p-4 border rounded-lg shadow-sm bg-amber-50 dark:bg-amber-900/30 hover:shadow-md transition-shadow">
-                   <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
-                        <div className="flex-grow min-w-0">
-                            <h4 className="font-semibold text-md mb-0.5 truncate">
-                            {getArbetsorderDisplayTitle(ao)}
-                            <span className={`ml-2 text-xs font-normal px-1.5 py-0.5 rounded-full border whitespace-nowrap ${ ao.status === ArbetsorderStatus.MATNING ? 'bg-orange-100 text-orange-700 border-orange-300 dark:bg-orange-800/30 dark:text-orange-300 dark:border-orange-700' : ao.status === ArbetsorderStatus.OFFERT ? 'bg-yellow-100 text-yellow-700 border-yellow-300 dark:bg-yellow-800/30 dark:text-yellow-300 dark:border-yellow-700' : 'bg-blue-100 text-blue-700 border-blue-300 dark:bg-blue-800/30 dark:text-blue-300 dark:border-blue-700'}`}>{getArbetsorderStatusText(ao.status)}</span>
-                            </h4>
-                            {isAdminOrArbetsledare && ao.ansvarigTeknikerId && ao.ansvarigTekniker && (
-                                <p className="text-xs italic text-muted-foreground mb-1">
-                                    (Tilldelad: { ao.ansvarigTekniker.fornamn } { ao.ansvarigTekniker.efternamn })
-                                </p>
-                            )}
-                        </div>
-                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 mt-2 sm:mt-0 w-full sm:w-auto flex-shrink-0">
-                            <Link href={`/arbetsordrar/${ao.id}`} passHref className="w-full sm:w-auto">
-                                <Button size="sm" variant="outline" className="w-full sm:w-auto text-primary border-primary/50 hover:bg-primary/10 whitespace-nowrap">
-                                Visa Order
-                                </Button>
-                            </Link>
-                            <Button size="sm" variant="default" className="w-full sm:w-auto whitespace-nowrap" onClick={() => handleBokaTidClick(ao.id, ao.ansvarigTeknikerId)}>
-                                <CalendarPlus className="mr-1.5 h-4 w-4 flex-shrink-0" /> <span className="truncate">Boka tid</span>
-                            </Button>
-                        </div>
-                    </div>
-                    <div className="mt-2 pt-2 border-t border-dashed dark:border-slate-700">
-                        <p className="text-sm flex items-center mt-1"> <User className="mr-1.5 h-4 w-4 text-primary" /> <Link href={`/kunder/${ao.kund.id}`} className="hover:underline text-primary font-medium">{getKundNamn(ao.kund)}</Link> </p>
-                        {ao.kund.telefonnummer && ( <p className="text-xs text-muted-foreground flex items-center mt-1"><Phone className="mr-1.5 h-3 w-3" /> {ao.kund.telefonnummer}</p> )}
-                        {ao.kund.adress && ( <p className="text-xs text-muted-foreground flex items-center mt-1"><MapPin className="mr-1.5 h-3 w-3" /> {ao.kund.adress}</p> )}
-                    </div>
+                  {akt.kund && ( <div className="mt-2 pt-2 border-t border-dashed dark:border-slate-700"> <p className="text-sm flex items-center mt-1"> <User className="mr-1.5 h-4 w-4 text-primary" /> <Link href={`/kunder/${akt.kund.id}`} className="hover:underline text-primary font-medium">{getKundNamn(akt.kund)}</Link> </p> {akt.kund.telefonnummer && ( <p className="text-xs text-muted-foreground flex items-center mt-1"><Phone className="mr-1.5 h-3 w-3" /> {akt.kund.telefonnummer}</p> )} {akt.kund.adress && ( <p className="text-xs text-muted-foreground flex items-center mt-1"><MapPin className="mr-1.5 h-3 w-3" /> {akt.kund.adress}</p> )} </div> )}
+                  {akt.beskrivning && !arbetsorder && ( <p className="text-xs text-muted-foreground mt-2 pt-2 border-t border-dashed dark:border-slate-700 flex items-start"><Info className="mr-1.5 h-3 w-3 mt-0.5 flex-shrink-0" /> <span>{akt.beskrivning}</span></p> )}
                 </div>
-              ))}
+              );
+            })}
 
-              {/* 3. Otilldelade Aktiva Jobb (endast Admin/AL) */}
-              {isAdminOrArbetsledare && otilldeladeAktivaJobb.length > 0 && ( <div className="my-6 border-t pt-6"> <h4 className="text-sm font-medium text-muted-foreground mb-3 text-center flex items-center justify-center"> <UserX className="mr-2 h-4 w-4 text-destructive" /> Otilldelade Aktiva Jobb </h4> </div> )}
-              {isAdminOrArbetsledare && otilldeladeAktivaJobb.map((ao) => (
-                <div key={`otilldelad-aktiv-${ao.id}`} className="p-3 sm:p-4 border rounded-lg shadow-sm bg-red-50 dark:bg-red-900/20 hover:shadow-md transition-shadow">
-                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
-                        <div className="flex-grow min-w-0">
-                            <h4 className="font-semibold text-md mb-0.5 truncate">
-                                {getArbetsorderDisplayTitle(ao)}
-                                <span className={`ml-2 text-xs font-normal px-1.5 py-0.5 rounded-full border whitespace-nowrap bg-blue-100 text-blue-700 border-blue-300 dark:bg-blue-800/30 dark:text-blue-300 dark:border-blue-700`}>{getArbetsorderStatusText(ao.status)}</span>
-                                <span className="ml-2 text-xs italic text-destructive/80">(Ingen ansvarig)</span>
-                            </h4>
-                        </div>
-                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 mt-2 sm:mt-0 w-full sm:w-auto flex-shrink-0">
-                            <Link href={`/arbetsordrar/${ao.id}`} passHref className="w-full sm:w-auto">
-                            <Button size="sm" variant="outline" className="w-full sm:w-auto text-primary border-primary/50 hover:bg-primary/10 whitespace-nowrap">
-                                Visa Order
-                            </Button>
-                            </Link>
-                            <Button size="sm" variant="outline" className="w-full sm:w-auto border-destructive/50 text-destructive/90 hover:bg-destructive/10 hover:text-destructive whitespace-nowrap" onClick={() => router.push(`/arbetsordrar/${ao.id}/redigera`)}>
-                               <UserX className="mr-1.5 h-4 w-4 flex-shrink-0" /> <span className="truncate">Tilldela Ansvarig</span>
-                            </Button>
-                            <Button size="sm" variant="default" className="w-full sm:w-auto whitespace-nowrap" onClick={() => handleBokaTidClick(ao.id, null)}>
+            {/* 2. Obokade Jobb MED Ansvarig */}
+            {obokadeJobbMedAnsvarig.length > 0 && ( <div className="my-6 border-t pt-6"> <h4 className="text-sm font-medium text-muted-foreground mb-3 text-center"> {isAdminOrArbetsledare ? "Tilldelade Obokade Jobb" : "Dina Obokade Tilldelade Jobb"} </h4> </div> )}
+            {obokadeJobbMedAnsvarig.map((ao) => (
+              <div key={`obokad-tilldelad-${ao.id}`} className="p-3 sm:p-4 border rounded-lg shadow-sm bg-amber-50 dark:bg-amber-900/30 hover:shadow-md transition-shadow">
+                 {/* ÄNDRING: Lade till sm:flex-wrap */}
+                 <div className="flex flex-col sm:flex-row sm:flex-wrap justify-between items-start sm:items-center gap-2">
+                      <div className="flex-grow min-w-0">
+                          <h4 className="font-semibold text-md mb-0.5 truncate">
+                          {getArbetsorderDisplayTitle(ao)}
+                          <span className={`ml-2 text-xs font-normal px-1.5 py-0.5 rounded-full border whitespace-nowrap ${ ao.status === ArbetsorderStatus.MATNING ? 'bg-orange-100 text-orange-700 border-orange-300 dark:bg-orange-800/30 dark:text-orange-300 dark:border-orange-700' : ao.status === ArbetsorderStatus.OFFERT ? 'bg-yellow-100 text-yellow-700 border-yellow-300 dark:bg-yellow-800/30 dark:text-yellow-300 dark:border-yellow-700' : 'bg-blue-100 text-blue-700 border-blue-300 dark:bg-blue-800/30 dark:text-blue-300 dark:border-blue-700'}`}>{getArbetsorderStatusText(ao.status)}</span>
+                          </h4>
+                          {isAdminOrArbetsledare && ao.ansvarigTeknikerId && ao.ansvarigTekniker && (
+                              <p className="text-xs italic text-muted-foreground mb-1">
+                                  (Tilldelad: { ao.ansvarigTekniker.fornamn } { ao.ansvarigTekniker.efternamn })
+                              </p>
+                          )}
+                      </div>
+                      {/* ÄNDRING: Gjorde denna flex-container mer flexibel för wrapping */}
+                      <div className="flex flex-wrap items-center gap-2 mt-2 sm:mt-0">
+                          <Link href={`/arbetsordrar/${ao.id}`} passHref>
+                              <Button size="sm" variant="outline" className="text-primary border-primary/50 hover:bg-primary/10 whitespace-nowrap">
+                              Visa Order
+                              </Button>
+                          </Link>
+                          <Button size="sm" variant="default" className="whitespace-nowrap" onClick={() => handleBokaTidClick(ao.id, ao.ansvarigTeknikerId)}>
                               <CalendarPlus className="mr-1.5 h-4 w-4 flex-shrink-0" /> <span className="truncate">Boka tid</span>
-                            </Button>
-                        </div>
-                    </div>
-                  <div className="mt-2 pt-2 border-t border-dashed dark:border-slate-700">
-                    <p className="text-sm flex items-center mt-1"> <User className="mr-1.5 h-4 w-4 text-primary" /> <Link href={`/kunder/${ao.kund.id}`} className="hover:underline text-primary font-medium">{getKundNamn(ao.kund)}</Link> </p>
-                    {ao.kund.telefonnummer && ( <p className="text-xs text-muted-foreground flex items-center mt-1"><Phone className="mr-1.5 h-3 w-3" /> {ao.kund.telefonnummer}</p> )}
-                    {ao.kund.adress && ( <p className="text-xs text-muted-foreground flex items-center mt-1"><MapPin className="mr-1.5 h-3 w-3" /> {ao.kund.adress}</p> )}
+                          </Button>
+                      </div>
                   </div>
+                  <div className="mt-2 pt-2 border-t border-dashed dark:border-slate-700">
+                      <p className="text-sm flex items-center mt-1"> <User className="mr-1.5 h-4 w-4 text-primary" /> <Link href={`/kunder/${ao.kund.id}`} className="hover:underline text-primary font-medium">{getKundNamn(ao.kund)}</Link> </p>
+                      {ao.kund.telefonnummer && ( <p className="text-xs text-muted-foreground flex items-center mt-1"><Phone className="mr-1.5 h-3 w-3" /> {ao.kund.telefonnummer}</p> )}
+                      {ao.kund.adress && ( <p className="text-xs text-muted-foreground flex items-center mt-1"><MapPin className="mr-1.5 h-3 w-3" /> {ao.kund.adress}</p> )}
+                  </div>
+              </div>
+            ))}
+
+            {/* 3. Otilldelade Aktiva Jobb (endast Admin/AL) */}
+            {isAdminOrArbetsledare && otilldeladeAktivaJobb.length > 0 && ( <div className="my-6 border-t pt-6"> <h4 className="text-sm font-medium text-muted-foreground mb-3 text-center flex items-center justify-center"> <UserX className="mr-2 h-4 w-4 text-destructive" /> Otilldelade Aktiva Jobb </h4> </div> )}
+            {isAdminOrArbetsledare && otilldeladeAktivaJobb.map((ao) => (
+              <div key={`otilldelad-aktiv-${ao.id}`} className="p-3 sm:p-4 border rounded-lg shadow-sm bg-red-50 dark:bg-red-900/20 hover:shadow-md transition-shadow">
+                {/* ÄNDRING: Lade till sm:flex-wrap */}
+                <div className="flex flex-col sm:flex-row sm:flex-wrap justify-between items-start sm:items-center gap-2">
+                      <div className="flex-grow min-w-0">
+                          <h4 className="font-semibold text-md mb-0.5 truncate">
+                              {getArbetsorderDisplayTitle(ao)}
+                              <span className={`ml-2 text-xs font-normal px-1.5 py-0.5 rounded-full border whitespace-nowrap bg-blue-100 text-blue-700 border-blue-300 dark:bg-blue-800/30 dark:text-blue-300 dark:border-blue-700`}>{getArbetsorderStatusText(ao.status)}</span>
+                              <span className="ml-2 text-xs italic text-destructive/80">(Ingen ansvarig)</span>
+                          </h4>
+                      </div>
+                      {/* ÄNDRING: Gjorde denna flex-container mer flexibel för wrapping */}
+                      <div className="flex flex-wrap items-center gap-2 mt-2 sm:mt-0">
+                          <Link href={`/arbetsordrar/${ao.id}`} passHref>
+                          <Button size="sm" variant="outline" className="text-primary border-primary/50 hover:bg-primary/10 whitespace-nowrap">
+                              Visa Order
+                          </Button>
+                          </Link>
+                          <Button size="sm" variant="outline" className="border-destructive/50 text-destructive/90 hover:bg-destructive/10 hover:text-destructive whitespace-nowrap" onClick={() => router.push(`/arbetsordrar/${ao.id}/redigera`)}>
+                             <UserX className="mr-1.5 h-4 w-4 flex-shrink-0" /> <span className="truncate">Tilldela Ansvarig</span>
+                          </Button>
+                          <Button size="sm" variant="default" className="whitespace-nowrap" onClick={() => handleBokaTidClick(ao.id, null)}>
+                            <CalendarPlus className="mr-1.5 h-4 w-4 flex-shrink-0" /> <span className="truncate">Boka tid</span>
+                          </Button>
+                      </div>
+                  </div>
+                <div className="mt-2 pt-2 border-t border-dashed dark:border-slate-700">
+                  <p className="text-sm flex items-center mt-1"> <User className="mr-1.5 h-4 w-4 text-primary" /> <Link href={`/kunder/${ao.kund.id}`} className="hover:underline text-primary font-medium">{getKundNamn(ao.kund)}</Link> </p>
+                  {ao.kund.telefonnummer && ( <p className="text-xs text-muted-foreground flex items-center mt-1"><Phone className="mr-1.5 h-3 w-3" /> {ao.kund.telefonnummer}</p> )}
+                  {ao.kund.adress && ( <p className="text-xs text-muted-foreground flex items-center mt-1"><MapPin className="mr-1.5 h-3 w-3" /> {ao.kund.adress}</p> )}
                 </div>
-              ))}
-            </div>
-          </ScrollArea>
+              </div>
+            ))}
+          </div>
         )}
       </CardContent>
     </Card>

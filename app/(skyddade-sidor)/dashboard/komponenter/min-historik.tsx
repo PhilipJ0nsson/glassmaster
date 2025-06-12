@@ -7,11 +7,11 @@ import { toast } from 'sonner';
 import { KalenderHandelse } from '@/app/(skyddade-sidor)/kalender/page';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Loader2, History, Clock, User, Briefcase, MapPin, FileText, FileUp, Info } from 'lucide-react'; // ExternalLink borttagen
+import { Loader2, History, Clock, User, Briefcase, MapPin, FileText, FileUp, Info } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { sv } from 'date-fns/locale';
 import Link from 'next/link';
-import { ScrollArea } from '@/components/ui/scroll-area';
+// ScrollArea borttagen
 import { MotesTyp, ArbetsorderStatus, AnvandareRoll } from '@prisma/client';
 import { useRouter } from 'next/navigation';
 
@@ -28,14 +28,13 @@ const getDisplayTitleForHistorik = (event: HistorikEventForDisplay, role: Anvand
         if (arbetsorder.referensMärkning) {
             aoInfo += `: ${arbetsorder.referensMärkning}`;
         } else if (arbetsorder.material) {
-            // Korta ner materialbeskrivningen något mer för att undvika problem med bredden
             aoInfo += `: ${arbetsorder.material.substring(0,20)}${arbetsorder.material.length > 20 ? '...' : ''}`;
         }
 
         if (event.__actionType === 'matning_klar') {
-            displayTitle = `${aoInfo} - Mätning utförd`; // Kortare titel
+            displayTitle = `${aoInfo} - Mätning utförd`;
         } else if (event.__actionType === 'fakturering_vantar') {
-            displayTitle = `${aoInfo} - Slutförd`; // Kortare titel
+            displayTitle = `${aoInfo} - Slutförd`;
         } else {
             const grundTitel = event.titel || aoInfo;
             displayTitle = event.titel && arbetsorder ? `${event.titel} (${aoInfo})` : grundTitel;
@@ -46,7 +45,6 @@ const getDisplayTitleForHistorik = (event: HistorikEventForDisplay, role: Anvand
     }
     return displayTitle;
 };
-
 
 const getMotesTypTextHistorik = (motestyp: MotesTyp | undefined) => {
   if (!motestyp) return "Händelse";
@@ -79,10 +77,9 @@ const formatDateHistorik = (dateStr: string) => {
 const getKundNamnHistorik = (kund: HistorikEventForDisplay['kund']) => {
   if (!kund) return '';
   if (kund.privatperson) return `${kund.privatperson.fornamn} ${kund.privatperson.efternamn}`;
-  if (kund.foretag && kund.foretag.foretagsnamn) return kund.foretag.foretagsnamn; // Lade till null-check för foretagsnamn
+  if (kund.foretag && kund.foretag.foretagsnamn) return kund.foretag.foretagsnamn;
   return '';
 };
-
 
 export default function MinHistorik() {
   const { data: session } = useSession();
@@ -132,24 +129,20 @@ export default function MinHistorik() {
 
   const displayedHistory: HistorikEventForDisplay[] = useMemo(() => {
     const actionableItemsMap = new Map<number, HistorikEventForDisplay>();
-
     for (const event of allFetchedHistoryEvents) {
         const ao = event.arbetsorder;
-
         if (ao && ao.id) {
             if (userRole === AnvandareRoll.TEKNIKER) {
                 const isOwnEvent = event.ansvarigId === userId ||
                                    (event.medarbetare && event.medarbetare.some(m => m.anvandare.id === userId));
                 if (!isOwnEvent) continue;
             }
-
             let currentActionType: HistorikEventForDisplay['__actionType'] | undefined = undefined;
             if (ao.status === ArbetsorderStatus.MATNING && event.hanteradAvAdmin) {
                 currentActionType = 'matning_klar';
             } else if (ao.status === ArbetsorderStatus.SLUTFORD) {
                 currentActionType = 'fakturering_vantar';
             }
-
             if (currentActionType) {
                 const eventForDisplay: HistorikEventForDisplay = { ...event, __actionType: currentActionType };
                 const existingItem = actionableItemsMap.get(ao.id);
@@ -162,17 +155,15 @@ export default function MinHistorik() {
             }
         }
     }
-
     return Array.from(actionableItemsMap.values())
                 .sort((a, b) => new Date(b.slutDatumTid).getTime() - new Date(a.slutDatumTid).getTime());
   }, [allFetchedHistoryEvents, userRole, userId]);
-
 
   const cardTitle = isAdminOrArbetsledare ? "Åtgärder Väntar" : "Status Pågående Jobb";
 
   if (loading && displayedHistory.length === 0 && !error) {
      return (
-      <Card>
+      <Card> {/* className="flex flex-col" borttagen, Card hanterar oftast detta själv */}
         <CardHeader><CardTitle className="flex items-center"><History className="mr-2 h-5 w-5" /> {cardTitle}</CardTitle></CardHeader>
         <CardContent className="h-60 flex items-center justify-center">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /><p className="ml-2 text-muted-foreground">Laddar historik...</p>
@@ -183,7 +174,7 @@ export default function MinHistorik() {
 
   if (error) {
     return (
-      <Card>
+      <Card> {/* className="flex flex-col" borttagen */}
         <CardHeader><CardTitle className="flex items-center"><History className="mr-2 h-5 w-5" /> {cardTitle}</CardTitle></CardHeader>
         <CardContent className="h-60 flex items-center justify-center text-destructive"><p>{error}</p></CardContent>
       </Card>
@@ -191,96 +182,92 @@ export default function MinHistorik() {
   }
 
   return (
-    <Card>
+    <Card> {/* className="flex flex-col" borttagen */}
       <CardHeader className="flex flex-row items-center justify-between pb-2">
         <CardTitle className="flex items-center"><History className="mr-2 h-5 w-5" /> {cardTitle}</CardTitle>
       </CardHeader>
-      <CardContent>
+      <CardContent> {/* className="flex-1 overflow-hidden" borttagen */}
         {(!loading && displayedHistory.length === 0 && !error) ? (
           <p className="text-muted-foreground py-4 text-center">
             {isAdminOrArbetsledare ? "Inga omedelbara åtgärder att hantera." : "Inga pågående jobb med väntande åtgärder."}
           </p>
         ) : (
-          <ScrollArea className="h-80">
-            <div className="space-y-3 pr-3">
-              {displayedHistory.map((event) => {
-                const arbetsorder = event.arbetsorder;
-                if (!arbetsorder) return null;
+          <div className="space-y-3"> {/* pr-3 borttagen, ScrollArea borttagen */}
+            {displayedHistory.map((event) => {
+              const arbetsorder = event.arbetsorder;
+              if (!arbetsorder) return null;
+              const displayEventTitle = getDisplayTitleForHistorik(event, userRole);
+              let actionButton = null;
+              if (isAdminOrArbetsledare) {
+                  if (event.__actionType === 'matning_klar') {
+                      actionButton = (
+                          <Button
+                              variant="outline"
+                              size="sm"
+                              className="text-xs h-7 px-2 border-blue-500 text-blue-600 hover:bg-blue-50 dark:border-blue-600 dark:text-blue-400 dark:hover:bg-blue-700/30 whitespace-nowrap"
+                              onClick={() => router.push(`/arbetsordrar/${arbetsorder.id}`)}
+                          >
+                              <FileText className="h-3 w-3 mr-1.5 flex-shrink-0" />
+                              <span className="truncate">Ny Offert/Order</span>
+                          </Button>
+                      );
+                  } else if (event.__actionType === 'fakturering_vantar') {
+                      actionButton = (
+                          <Button
+                              variant="outline"
+                              size="sm"
+                              className="text-xs h-7 px-2 border-green-500 text-green-600 hover:bg-green-50 dark:border-green-600 dark:text-green-400 dark:hover:bg-green-700/30 whitespace-nowrap"
+                              onClick={() => router.push(`/arbetsordrar/${arbetsorder.id}`)}
+                          >
+                              <FileUp className="h-3 w-3 mr-1.5 flex-shrink-0" />
+                              <span className="truncate">Fakturera</span>
+                          </Button>
+                      );
+                  }
+              }
 
-                const displayEventTitle = getDisplayTitleForHistorik(event, userRole);
-
-                let actionButton = null;
-                if (isAdminOrArbetsledare) {
-                    if (event.__actionType === 'matning_klar') {
-                        actionButton = (
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                className="w-full sm:w-auto text-xs h-7 px-2 border-blue-500 text-blue-600 hover:bg-blue-50 dark:border-blue-600 dark:text-blue-400 dark:hover:bg-blue-700/30 whitespace-nowrap"
-                                onClick={() => router.push(`/arbetsordrar/${arbetsorder.id}`)}
-                            >
-                                <FileText className="h-3 w-3 mr-1.5 flex-shrink-0" />
-                                <span className="truncate">Ny Offert/Order</span>
-                            </Button>
-                        );
-                    } else if (event.__actionType === 'fakturering_vantar') {
-                        actionButton = (
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                className="w-full sm:w-auto text-xs h-7 px-2 border-green-500 text-green-600 hover:bg-green-50 dark:border-green-600 dark:text-green-400 dark:hover:bg-green-700/30 whitespace-nowrap"
-                                onClick={() => router.push(`/arbetsordrar/${arbetsorder.id}`)}
-                            >
-                                <FileUp className="h-3 w-3 mr-1.5 flex-shrink-0" />
-                                <span className="truncate">Fakturera</span>
-                            </Button>
-                        );
-                    }
-                }
-
-                return (
-                  <div key={`hist-action-${event.id}`}
-                    className={`p-3 sm:p-4 border rounded-md bg-white dark:bg-slate-800/50 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors`}>
-                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
-                        <div className="flex-grow min-w-0">
-                            <h4 className="font-medium text-sm text-foreground truncate">
-                                {displayEventTitle}
-                            </h4>
-                             {isAdminOrArbetsledare && event.ansvarig && event.ansvarigId !== userId && (
-                                 <p className="text-xs italic text-muted-foreground mt-0.5">
-                                     (Ansvarig: {event.ansvarig.fornamn} {event.ansvarig.efternamn})
-                                 </p>
-                            )}
-                            <p className="text-xs text-muted-foreground flex items-center flex-wrap mt-1">
-                                <Clock className="mr-1.5 h-3 w-3 flex-shrink-0" />
-                                {formatDateHistorik(event.slutDatumTid)}
-                                <span className="mx-1">•</span>
-                                {getArbetsorderStatusTextHistorik(arbetsorder.status as ArbetsorderStatus)}
-                                {event.__actionType === 'matning_klar' &&
-                                  <span className="mx-1 text-blue-600 dark:text-blue-400 whitespace-nowrap">• Mätning Klar</span>}
-                                {event.__actionType === 'fakturering_vantar' &&
-                                  <span className="mx-1 text-green-600 dark:text-green-400 whitespace-nowrap">• Väntar Faktura</span>}
-                            </p>
-                        </div>
-                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-1.5 mt-2 sm:mt-0 w-full sm:w-auto flex-shrink-0">
-                            <Link href={`/arbetsordrar/${arbetsorder.id}`} passHref className="w-full sm:w-auto">
-                                <Button variant="outline" size="sm" className="w-full sm:w-auto text-xs h-7 px-2 text-primary border-primary/50 hover:bg-primary/10 whitespace-nowrap">
-                                    Visa Order
-                                </Button>
-                            </Link>
-                            {actionButton}
-                        </div>
-                    </div>
-                    {event.beskrivning && (
-                        <p className="text-xs text-muted-foreground mt-2 pt-2 border-t border-dashed border-slate-200 dark:border-slate-700 flex items-start">
-                            <Info className="h-3 w-3 mr-1.5 mt-0.5 shrink-0"/> {event.beskrivning}
-                        </p>
-                    )}
+              return (
+                <div key={`hist-action-${event.id}`}
+                  className={`p-3 sm:p-4 border rounded-md bg-white dark:bg-slate-800/50 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors`}>
+                  <div className="flex flex-col sm:flex-row sm:flex-wrap justify-between items-start sm:items-center gap-2">
+                      <div className="flex-grow min-w-0">
+                          <h4 className="font-medium text-sm text-foreground truncate">
+                              {displayEventTitle}
+                          </h4>
+                           {isAdminOrArbetsledare && event.ansvarig && event.ansvarigId !== userId && (
+                               <p className="text-xs italic text-muted-foreground mt-0.5">
+                                   (Ansvarig: {event.ansvarig.fornamn} {event.ansvarig.efternamn})
+                               </p>
+                          )}
+                          <p className="text-xs text-muted-foreground flex items-center flex-wrap mt-1">
+                              <Clock className="mr-1.5 h-3 w-3 flex-shrink-0" />
+                              {formatDateHistorik(event.slutDatumTid)}
+                              <span className="mx-1">•</span>
+                              {getArbetsorderStatusTextHistorik(arbetsorder.status as ArbetsorderStatus)}
+                              {event.__actionType === 'matning_klar' &&
+                                <span className="mx-1 text-blue-600 dark:text-blue-400 whitespace-nowrap">• Mätning Klar</span>}
+                              {event.__actionType === 'fakturering_vantar' &&
+                                <span className="mx-1 text-green-600 dark:text-green-400 whitespace-nowrap">• Väntar Faktura</span>}
+                          </p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5 mt-2 sm:mt-0"> {/* Ändrad från flex-col sm:flex-row och tog bort w-full/sm:w-auto samt flex-shrink-0 */}
+                          <Link href={`/arbetsordrar/${arbetsorder.id}`} passHref>
+                              <Button variant="outline" size="sm" className="text-xs h-7 px-2 text-primary border-primary/50 hover:bg-primary/10 whitespace-nowrap">
+                                  Visa Order
+                              </Button>
+                          </Link>
+                          {actionButton}
+                      </div>
                   </div>
-                );
-              })}
-            </div>
-          </ScrollArea>
+                  {event.beskrivning && (
+                      <p className="text-xs text-muted-foreground mt-2 pt-2 border-t border-dashed border-slate-200 dark:border-slate-700 flex items-start">
+                          <Info className="h-3 w-3 mr-1.5 mt-0.5 shrink-0"/> {event.beskrivning}
+                      </p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         )}
       </CardContent>
       {displayedHistory.length > 0 && (
